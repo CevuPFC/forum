@@ -1,0 +1,163 @@
+rules_version = '2';
+
+// Firestore pravila za ETŠ forum.
+// Firebase konzola > Firestore Database > Rules > nalepi ceo fajl > Publish.
+//
+// Šta pravila obezbeđuju:
+//  - samo prijavljen učenik može da piše objave, komentare i da glasa
+//  - niko ne može da se predstavi tuđim imenom
+//  - ocenu (score) je moguće promeniti samo zajedno sa sopstvenim glasom, pa svako ima najviše jedan glas
+//  - brisati mogu autor i administratori; administrator je onaj čiji UID postoji u kolekciji "admins"
+//  - samo administratori mogu da objavljuju na forumu "skola" i da čitaju prijave
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function myName() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username;
+    }
+
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // Lista foruma mora da se poklapa sa communities.js
+    function isValidCommunity(c) {
+      return c in ['skola', 'opste', 'pitanja', 'elektronika', 'programiranje', 'projekti', 'zezanje'];
+    }
+
+    // Glas korisnika za stavku (objavu ili komentar), pre i posle ove izmene
+    function voteBefore(id) {
+      let p = /databases/$(database)/documents/users/$(request.auth.uid)/votes/$(id);
+      return exists(p) ? get(p).data.value : 0;
+    }
+    function voteAfter(id) {
+      return getAfter(/databases/$(database)/documents/users/$(request.auth.uid)/votes/$(id)).data.value;
+    }
+    function scoreMatchesVote(id) {
+      return request.resource.data.score - resource.data.score == voteAfter(id) - voteBefore(id);
+    }
+
+    // Administratori: dokument se pravi ručno u konzoli (ID dokumenta = UID korisnika)
+    match /admins/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Rezervacija korisničkog imena (jedinstveno, bez obzira na velika i mala slova)
+    match /usernames/{name} {
+      allow read: if true;
+      allow create: if signedIn()
+        && name.matches('^[a-z0-9_.]{3,20}$')
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['username', 'usernameLower', 'createdAt'])
+        && request.resource.data.username is string
+        && request.resource.data.username.matches('^[A-Za-z0-9_.]{3,20}$')
+        && request.resource.data.usernameLower == request.resource.data.username.lower()
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower)).data.uid == uid;
+      allow update, delete: if false;
+
+      // Moji glasovi: users/{uid}/votes/{id}
+      match /votes/{id} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['value'])
+          && request.resource.data.value in [-1, 0, 1];
+        allow delete: if false;
+      }
+    }
+
+    match /posts/{postId} {
+      // Za zatvoren forum (samo prijavljeni čitaju) promeni u: allow read: if signedIn();
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(
+             ['title', 'body', 'url', 'community', 'authorId', 'authorName', 'createdAt', 'score', 'commentCount'])
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.authorName == myName()
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 3
+        && request.resource.data.title.size() <= 150
+        && request.resource.data.body is string
+        && request.resource.data.body.size() <= 5000
+        && request.resource.data.url is string
+        && request.resource.data.url.size() <= 500
+        && (request.resource.data.url == '' || request.resource.data.url.matches('^https?://.+'))
+        && isValidCommunity(request.resource.data.community)
+        && (request.resource.data.community != 'skola' || isAdmin())
+        && request.resource.data.score == 0
+        && request.resource.data.commentCount == 0
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if signedIn() && (
+        (onlyChanges(['score']) && scoreMatchesVote(postId))
+        || (onlyChanges(['commentCount'])
+            && request.resource.data.commentCount == resource.data.commentCount + 1)
+      );
+
+      allow delete: if signedIn() && (resource.data.authorId == request.auth.uid || isAdmin());
+    }
+
+    match /comments/{commentId} {
+      // Za zatvoren forum promeni u: allow read: if signedIn();
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(
+             ['postId', 'parentId', 'body', 'authorId', 'authorName', 'createdAt', 'score', 'deleted'])
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.authorName == myName()
+        && request.resource.data.postId is string
+        && exists(/databases/$(database)/documents/posts/$(request.resource.data.postId))
+        && (request.resource.data.parentId == null || request.resource.data.parentId is string)
+        && request.resource.data.body is string
+        && request.resource.data.body.size() >= 1
+        && request.resource.data.body.size() <= 2000
+        && request.resource.data.score == 0
+        && request.resource.data.deleted == false
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if signedIn() && (
+        (onlyChanges(['score']) && scoreMatchesVote(commentId))
+        || ((resource.data.authorId == request.auth.uid || isAdmin())
+            && onlyChanges(['body', 'deleted'])
+            && request.resource.data.deleted == true
+            && request.resource.data.body == '[obrisano]')
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(
+             ['targetType', 'targetId', 'postId', 'reason', 'snippet', 'reporterId', 'createdAt'])
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.targetType in ['post', 'comment']
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 300
+        && request.resource.data.snippet is string
+        && request.resource.data.snippet.size() <= 200
+        && request.resource.data.createdAt == request.time;
+      allow read, delete: if isAdmin();
+      allow update: if false;
+    }
+  }
+}

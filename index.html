@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="sr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ETŠ forum</title>
+  <meta name="description" content="Forum učenika Elektrotehničke škole „Stari grad“: pitanja, projekti i razgovor.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    // Postavi temu pre iscrtavanja da ekran ne "trepne".
+    try {
+      var t = localStorage.getItem("etsforum.theme");
+      if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Preskoči na sadržaj</a>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/" aria-label="ETŠ forum, početna">
+        <span id="brand-mark"></span>
+        <span class="brand-text">
+          <span class="brand-name">ETŠ forum</span>
+          <span class="brand-sub">Stari grad</span>
+        </span>
+      </a>
+
+      <form class="search" role="search" id="search-form">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Pretraži objave" aria-label="Pretraži objave" autocomplete="off">
+      </form>
+
+      <div class="topbar-actions">
+        <button class="icon-btn" id="theme-btn" type="button" aria-label="Promeni temu"></button>
+        <div id="authbox"></div>
+      </div>
+    </div>
+  </header>
+
+  <div id="banner"></div>
+
+  <div class="layout">
+    <nav id="sidebar" class="sidebar" aria-label="Forumi"></nav>
+    <main id="main" tabindex="-1"></main>
+    <aside id="aside" class="aside" aria-label="O forumu"></aside>
+  </div>
+
+  <dialog id="dlg" aria-modal="true"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <noscript><p style="padding:24px">Forum zahteva uključen JavaScript.</p></noscript>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
