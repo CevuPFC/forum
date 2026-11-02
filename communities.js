@@ -1,66 +1,81 @@
-// Forumi (kao "subreddit"-i). Svaki forum ima tri boje otpornika kao oznaku.
+// Forumi (kao "subreddit"-i). Svaki forum ima emoji i boju.
 // Ako dodaš ili izbrišeš forum, ažuriraj i listu u firestore.rules (isValidCommunity).
-
-export const RESISTOR = {
-  black: "#222222",
-  brown: "#7B4A24",
-  red: "#D62F2F",
-  orange: "#F28C1B",
-  yellow: "#F2C230",
-  green: "#2E9E5B",
-  blue: "#2F6FDB",
-  violet: "#7C4DC4",
-  grey: "#8A94A6",
-  white: "#F4F4F4",
-};
 
 export const COMMUNITIES = [
   {
-    id: "skola",
-    name: "Obaveštenja",
-    desc: "Vesti i obaveštenja iz škole. Ovde objavljuju samo administratori.",
-    bands: ["yellow", "violet", "red"],
+    id: "novosti",
+    name: "Novosti",
+    desc: "Vesti i pravila od tima Glasa. Ovde objavljuju samo administratori.",
+    emoji: "📣",
+    color: "#FF4FA3",
     adminOnly: true,
   },
   {
     id: "opste",
     name: "Opšte",
-    desc: "Razgovor o školi, predmetima i svemu između.",
-    bands: ["brown", "black", "red"],
+    desc: "Razgovor o svemu što ne staje u druge forume.",
+    emoji: "💬",
+    color: "#8B7CFF",
   },
   {
-    id: "pitanja",
-    name: "Pitanja i pomoć",
-    desc: "Zadaci, gradivo i objašnjenja. Pitaj kako se nešto radi.",
-    bands: ["orange", "orange", "brown"],
+    id: "gaming",
+    name: "Gaming",
+    desc: "Igrice, konzole, PC, turniri i priče sa ekrana.",
+    emoji: "🎮",
+    color: "#35E0FF",
   },
   {
-    id: "elektronika",
-    name: "Elektronika i hardver",
-    desc: "Kola, merenja, lemljenje, mikrokontroleri i sve što se greje.",
-    bands: ["green", "blue", "orange"],
+    id: "muzika",
+    name: "Muzika",
+    desc: "Šta slušaš, šta preporučuješ i šta ti ne silazi sa repeat-a.",
+    emoji: "🎧",
+    color: "#B26BFF",
   },
   {
-    id: "programiranje",
-    name: "Programiranje",
-    desc: "Kod, alati, greške koje ne razumeš i programi koje si napravio.",
-    bands: ["blue", "grey", "red"],
+    id: "filmovi",
+    name: "Filmovi i serije",
+    desc: "Šta gledati, šta preskočiti i šta te je zalepilo za ekran.",
+    emoji: "🍿",
+    color: "#FFB84D",
   },
   {
-    id: "projekti",
-    name: "Projekti i takmičenja",
-    desc: "Traži ekipu, pokaži šta si napravio, pripremi se za takmičenje.",
-    bands: ["violet", "green", "brown"],
+    id: "sport",
+    name: "Sport",
+    desc: "Utakmice, treninzi i sve između.",
+    emoji: "⚽",
+    color: "#2EF2A0",
   },
   {
-    id: "zezanje",
-    name: "Zezanje",
-    desc: "Mimovi i šale, uz poštovanje pravila foruma.",
-    bands: ["red", "red", "yellow"],
+    id: "mimovi",
+    name: "Mimovi",
+    desc: "Šale i mimovi. Dozvoljeno je sve što nije na tuđ račun.",
+    emoji: "😂",
+    color: "#FFE14D",
+  },
+  {
+    id: "saveti",
+    name: "Pitanja i saveti",
+    desc: "Pitaj šta god te muči: škola, drugari, navike, život.",
+    emoji: "🙋",
+    color: "#FF8A5C",
+  },
+  {
+    id: "tehnika",
+    name: "Tehnika i kod",
+    desc: "Programiranje, elektronika, gedžeti i projekti.",
+    emoji: "💻",
+    color: "#5CD6FF",
+  },
+  {
+    id: "skola",
+    name: "Škola",
+    desc: "Predmeti, profesori, ispiti i preživljavanje do raspusta.",
+    emoji: "🎒",
+    color: "#7CE08A",
   },
 ];
 
-export const ALL_BANDS = ["red", "green", "blue"];
+export const ALL_FORUMS = { id: "", name: "Sve objave", emoji: "✨", color: "#8B7CFF" };
 
 export function getCommunity(id) {
   return (
@@ -68,7 +83,8 @@ export function getCommunity(id) {
       id,
       name: id || "Nepoznat forum",
       desc: "",
-      bands: ["grey", "grey", "grey"],
+      emoji: "💬",
+      color: "#8B7CFF",
     }
   );
 }

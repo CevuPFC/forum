@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Firestore pravila za ETŠ forum.
+// Firestore pravila za Glas.
 // Firebase konzola > Firestore Database > Rules > nalepi ceo fajl > Publish.
 //
 // Šta pravila obezbeđuju:
@@ -8,7 +8,7 @@ rules_version = '2';
 //  - niko ne može da se predstavi tuđim imenom
 //  - ocenu (score) je moguće promeniti samo zajedno sa sopstvenim glasom, pa svako ima najviše jedan glas
 //  - brisati mogu autor i administratori; administrator je onaj čiji UID postoji u kolekciji "admins"
-//  - samo administratori mogu da objavljuju na forumu "skola" i da čitaju prijave
+//  - samo administratori mogu da objavljuju na forumu "novosti" i da čitaju prijave
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -31,7 +31,7 @@ service cloud.firestore {
 
     // Lista foruma mora da se poklapa sa communities.js
     function isValidCommunity(c) {
-      return c in ['skola', 'opste', 'pitanja', 'elektronika', 'programiranje', 'projekti', 'zezanje'];
+      return c in ['novosti', 'opste', 'gaming', 'muzika', 'filmovi', 'sport', 'mimovi', 'saveti', 'tehnika', 'skola'];
     }
 
     // Glas korisnika za stavku (objavu ili komentar), pre i posle ove izmene
@@ -101,7 +101,7 @@ service cloud.firestore {
         && request.resource.data.url.size() <= 500
         && (request.resource.data.url == '' || request.resource.data.url.matches('^https?://.+'))
         && isValidCommunity(request.resource.data.community)
-        && (request.resource.data.community != 'skola' || isAdmin())
+        && (request.resource.data.community != 'novosti' || isAdmin())
         && request.resource.data.score == 0
         && request.resource.data.commentCount == 0
         && request.resource.data.createdAt == request.time;

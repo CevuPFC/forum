@@ -2,20 +2,22 @@
 <html lang="sr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ETŠ forum</title>
-  <meta name="description" content="Forum učenika Elektrotehničke škole „Stari grad“: pitanja, projekti i razgovor.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Glas: mesto za razgovor mladih</title>
+  <meta name="description" content="Glas je mesto gde mladi pokreću teme o igricama, muzici, filmovima, sportu, mimovima i svemu ostalom.">
+  <meta name="theme-color" content="#0d0b1a">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%236D4AFF'/%3E%3Ctext x='29' y='47' font-size='42' font-family='Arial' font-weight='700' text-anchor='middle' fill='white'%3Eg%3C/text%3E%3Ccircle cx='47' cy='45' r='5' fill='%23FF4FA3'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <script>
-    // Postavi temu pre iscrtavanja da ekran ne "trepne".
+    // Tamna tema je podrazumevana. Postavi je pre iscrtavanja da ekran ne "trepne".
     try {
-      var t = localStorage.getItem("etsforum.theme");
-      if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-      document.documentElement.dataset.theme = t;
-    } catch (e) {}
+      document.documentElement.dataset.theme = localStorage.getItem("glas.theme") || "dark";
+    } catch (e) {
+      document.documentElement.dataset.theme = "dark";
+    }
   </script>
 </head>
 <body>
@@ -23,17 +25,18 @@
 
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="brand" href="#/" aria-label="ETŠ forum, početna">
-        <span id="brand-mark"></span>
-        <span class="brand-text">
-          <span class="brand-name">ETŠ forum</span>
-          <span class="brand-sub">Stari grad</span>
-        </span>
+      <a class="brand" href="#/" aria-label="Glas, početna">
+        <svg class="brand-mark" viewBox="0 0 64 64" width="34" height="34" aria-hidden="true">
+          <rect width="64" height="64" rx="16" fill="var(--primary)"/>
+          <text x="29" y="47" font-size="42" font-family="Bricolage Grotesque, Arial, sans-serif" font-weight="800" text-anchor="middle" fill="#fff">g</text>
+          <circle cx="47" cy="45" r="5" fill="var(--pink)"/>
+        </svg>
+        <span class="brand-name">glas<i>.</i></span>
       </a>
 
       <form class="search" role="search" id="search-form">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-        <input id="q" type="search" placeholder="Pretraži objave" aria-label="Pretraži objave" autocomplete="off">
+        <input id="q" type="search" placeholder="Pretraži teme" aria-label="Pretraži teme" autocomplete="off">
       </form>
 
       <div class="topbar-actions">
@@ -48,13 +51,15 @@
   <div class="layout">
     <nav id="sidebar" class="sidebar" aria-label="Forumi"></nav>
     <main id="main" tabindex="-1"></main>
-    <aside id="aside" class="aside" aria-label="O forumu"></aside>
+    <aside id="aside" class="aside" aria-label="O Glasu"></aside>
   </div>
+
+  <nav id="bottom-nav" class="bottom-nav" aria-label="Glavna navigacija"></nav>
 
   <dialog id="dlg" aria-modal="true"></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
 
-  <noscript><p style="padding:24px">Forum zahteva uključen JavaScript.</p></noscript>
+  <noscript><p style="padding:24px">Glas zahteva uključen JavaScript.</p></noscript>
   <script type="module" src="app.js"></script>
 </body>
 </html>

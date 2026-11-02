@@ -15,6 +15,7 @@
 //  report({targetType,targetId,postId,reason,snippet}), dismissReport(id)
 
 import { COMMUNITIES } from "./communities.js";
+import { buildSeed } from "./seed.js";
 
 const FIREBASE_VERSION = "10.12.2";
 const CDN = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/`;
@@ -368,7 +369,7 @@ async function createFirebaseBackend(config) {
 /* ------------------------------------------------------------------ */
 
 function createDemoBackend() {
-  const KEY = "etsforum.demo.v1";
+  const KEY = "glas.demo.v2";
   const listeners = new Set();
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const newId = () => "d" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3);
@@ -380,7 +381,7 @@ function createDemoBackend() {
       const raw = localStorage.getItem(KEY);
       if (raw) return JSON.parse(raw);
     } catch (_) { /* ignore */ }
-    return seed();
+    return buildSeed();
   }
   function save() {
     try {
@@ -545,92 +546,4 @@ function createDemoBackend() {
     },
   };
 
-  function seed() {
-    const now = Date.now();
-    const H = 3600 * 1000;
-    const users = {};
-    const addUser = (uid, username, email = `${username.toLowerCase()}@demo.rs`, password = "demo123") => {
-      users[uid] = { uid, username, email, password, createdAt: now - 40 * 24 * H };
-    };
-    addUser("u-admin", "admin", "admin@demo.rs", "admin123");
-    addUser("u-marko", "Marko_P");
-    addUser("u-jovana", "jovana.s");
-    addUser("u-nikola", "nikola03");
-    addUser("u-ana", "ana_k");
-
-    const posts = [];
-    const comments = [];
-    const P = (id, community, uid, title, body, hoursAgo, score, url = "") =>
-      posts.push({
-        id, community, title, body, url, authorId: uid, authorName: users[uid].username,
-        createdAt: now - hoursAgo * H, score, commentCount: 0,
-      });
-    const C = (id, postId, parentId, uid, body, hoursAgo, score) =>
-      comments.push({
-        id, postId, parentId, body, authorId: uid, authorName: users[uid].username,
-        createdAt: now - hoursAgo * H, score, deleted: false,
-      });
-
-    P("p1", "skola", "u-admin",
-      "Dobrodošli na ETŠ forum: pravila ponašanja",
-      "Ovo je mesto za učenike Elektrotehničke škole „Stari grad“. Postavljajte pitanja, delite projekte i pomažite jedni drugima.\n\n" +
-      "Pravila:\n" +
-      "1. Poštuj sve učenike i nastavnike. Vređanje i maltretiranje se brišu.\n" +
-      "2. Ne objavljuj lične podatke, svoje ni tuđe: adrese, brojeve telefona, fotografije drugih bez dozvole.\n" +
-      "3. Za domaći i zadatke pitaj kako se nešto radi, ne traži gotova rešenja za ocenjivane radove.\n" +
-      "4. Ako vidiš nešto neprimereno, klikni „Prijavi“.\n\n" +
-      "Administratori mogu da obrišu sadržaj koji krši pravila.",
-      70, 24);
-
-    P("p2", "pitanja", "u-marko",
-      "Kako se računa ekvivalentna otpornost kad su tri otpornika vezana paralelno?",
-      "Imam R1 = 100 Ω, R2 = 220 Ω i R3 = 470 Ω vezane paralelno. Znam formulu sa recipročnim vrednostima, ali mi ne ispada isto kao u zbirci. Šta radim pogrešno?",
-      5, 12);
-    C("c1", "p2", null, "u-jovana",
-      "Proveri da li si na kraju okrenuo razlomak. Zbir 1/R daje 1/Rekv, pa moraš još jednom da uzmeš recipročnu vrednost. Za tvoje brojeve ispada oko 60 Ω.",
-      4.5, 9);
-    C("c2", "p2", "c1", "u-marko", "To je to, zaboravio sam poslednji korak. Hvala!", 4, 4);
-    C("c3", "p2", null, "u-nikola",
-      "Brza provera: ekvivalentna otpornost paralelne veze mora da bude manja od najmanjeg otpornika. Ako ti ispadne više od 100 Ω, negde si pogrešio.",
-      3, 6);
-
-    P("p3", "elektronika", "u-nikola",
-      "Arduino Uno ili ESP32 za školski projekat?",
-      "Pravimo pametnu saksiju koja meri vlažnost zemljišta i šalje podatke na telefon. Razmišljamo između Arduina Uno i ESP32. Šta biste vi uzeli i zašto?",
-      20, 18);
-    C("c4", "p3", null, "u-ana",
-      "ESP32. Ima ugrađen Wi-Fi i Bluetooth, pa ti ne treba dodatni modul. Pazi samo da radi na 3,3 V, ne na 5 V.",
-      19, 11);
-    C("c5", "p3", "c4", "u-nikola", "Da li senzor vlažnosti radi na 3,3 V?", 18, 2);
-    C("c6", "p3", "c5", "u-ana", "Većina kapacitivnih senzora radi od 3,3 V do 5 V, ali proveri u datasheet-u za svoj model.", 17, 5);
-
-    P("p4", "programiranje", "u-jovana",
-      "Python ili C++ za početak?",
-      "Upisala sam se ove godine i ne znam odakle da krenem sa programiranjem. Da li prvo Python ili odmah C++, kao što se uči u školi?",
-      30, 7);
-    C("c7", "p4", null, "u-marko",
-      "Za početak Python, brže vidiš rezultate. C++ ćeš ionako učiti u školi, a lakše ćeš ga razumeti kad znaš osnove logike.",
-      28, 8);
-
-    P("p5", "projekti", "u-ana",
-      "Tražimo ekipu za takmičenje iz robotike",
-      "Planiramo da se prijavimo na takmičenje iz robotike. Treba nam još dvoje ljudi, jedan za mehaniku i jedan za programiranje. Javite se u komentarima.",
-      9, 15);
-    C("c8", "p5", null, "u-nikola", "Ja bih za programiranje. Pišem u C++ i Python-u.", 8, 3);
-
-    P("p6", "zezanje", "u-nikola",
-      "Lemljenje: kad se kalaj zalepi za sve osim za pločicu",
-      "Svako ko je lemio zna ovaj osećaj. Podelite svoje najgore lemilačke greške.",
-      46, 21);
-    C("c9", "p6", null, "u-marko", "Prvi put sam zalemio elektrolitski kondenzator obrnuto. Nije bilo lepo.", 45, 13);
-
-    P("p7", "elektronika", "u-ana",
-      "Simulator kola u pregledaču, koristan za vežbe",
-      "Radi direktno u pregledaču, ne treba instalacija. Dobar za proveru zadataka iz osnova elektrotehnike.",
-      60, 9, "https://www.falstad.com/circuit/");
-
-    posts.forEach((p) => (p.commentCount = comments.filter((c) => c.postId === p.id).length));
-
-    return { users, posts, comments, votes: {}, reports: [], session: null };
-  }
 }

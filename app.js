@@ -1,5 +1,5 @@
 import { firebaseConfig, settings } from "./firebase-config.js";
-import { COMMUNITIES, RESISTOR, ALL_BANDS, getCommunity } from "./communities.js";
+import { COMMUNITIES, ALL_FORUMS, getCommunity } from "./communities.js";
 import { createBackend, LIMITS } from "./db.js";
 
 /* ------------------------------------------------------------------ */
@@ -58,6 +58,8 @@ function ago(ms) {
 }
 
 const pluralComments = (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "komentar" : "komentara"}`;
+const pluralPosts = (n) =>
+  `${n} ${n % 10 === 1 && n % 100 !== 11 ? "objava" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "objave" : "objava"}`;
 
 function formatBody(text) {
   return esc(text).replace(/(https?:\/\/[^\s<]+)/g, (m) => {
@@ -75,6 +77,15 @@ function domainOf(url) {
   }
 }
 
+function isImageUrl(url) {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) && /\.(png|jpe?g|gif|webp|avif)$/i.test(u.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
 function snippet(text, n = 220) {
   const t = String(text || "").replace(/\s+/g, " ").trim();
   return t.length > n ? t.slice(0, n).trimEnd() + "…" : t;
@@ -89,47 +100,52 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
 }
 
+const svg = (path, size = 16, extra = "") =>
+  `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${path}</svg>`;
+
 const icon = {
-  up: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l8 10h-5v6H9v-6H4z"/></svg>`,
-  down: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 20L4 10h5V4h6v6h5z"/></svg>`,
-  comment: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>`,
-  flag: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h12l-2 4 2 4H5"/></svg>`,
-  trash: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>`,
-  reply: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5M4 9h9a7 7 0 017 7v3"/></svg>`,
-  link: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/></svg>`,
-  sun: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
-  moon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z"/></svg>`,
+  up: svg('<path d="M12 4l8 10h-5v6H9v-6H4z"/>', 18),
+  down: svg('<path d="M12 20L4 10h5V4h6v6h5z"/>', 18),
+  comment: svg('<path d="M4 5h16v11H9l-5 4z"/>'),
+  flag: svg('<path d="M5 21V4h12l-2 4 2 4H5"/>'),
+  trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
+  reply: svg('<path d="M9 14L4 9l5-5M4 9h9a7 7 0 017 7v3"/>'),
+  link: svg('<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>', 15),
+  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>', 18),
+  moon: svg('<path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z"/>', 18),
+  home: svg('<path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/>', 22),
+  grid: svg('<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/>', 22),
+  plus: svg('<path d="M12 5v14M5 12h14"/>', 26, 'stroke-width="2.6"'),
+  user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>', 22),
 };
 
-function resistor(bands, width = 34) {
-  const [a, b, c] = bands.map((n) => RESISTOR[n] || RESISTOR.grey);
-  const h = Math.round((width * 12) / 34);
-  return `<svg class="resistor" viewBox="0 0 34 12" width="${width}" height="${h}" aria-hidden="true">
-    <path d="M0 6h6M28 6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    <rect x="6" y="1" width="22" height="10" rx="4.5" fill="#E6D3A8"/>
-    <rect x="10" y="1" width="2.6" height="10" fill="${a}"/>
-    <rect x="15" y="1" width="2.6" height="10" fill="${b}"/>
-    <rect x="20" y="1" width="2.6" height="10" fill="${c}"/>
-    <rect x="24.5" y="1" width="1.5" height="10" fill="#C9A227"/>
-  </svg>`;
+function hue(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h % 360;
 }
+const avatar = (name, size = "") =>
+  `<span class="avatar ${size}" style="background:hsl(${hue(name)} 90% 68%)" aria-hidden="true">${esc(String(name || "?").charAt(0).toUpperCase())}</span>`;
+const emo = (c, size = "") =>
+  `<span class="emo ${size}" style="--c:${esc(c.color)}" aria-hidden="true">${c.emoji}</span>`;
 
 /* ------------------------------------------------------------------ */
 /* Tema                                                                */
 /* ------------------------------------------------------------------ */
 
-function currentTheme() {
-  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-}
+const currentTheme = () => (document.documentElement.dataset.theme === "light" ? "light" : "dark");
+
 function renderThemeButton() {
   const btn = $("#theme-btn");
   btn.innerHTML = currentTheme() === "dark" ? icon.sun : icon.moon;
   btn.title = currentTheme() === "dark" ? "Svetla tema" : "Tamna tema";
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = currentTheme() === "dark" ? "#0d0b1a" : "#f5f3ff";
 }
 function toggleTheme() {
   const next = currentTheme() === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = next;
-  try { localStorage.setItem("etsforum.theme", next); } catch (_) { /* ignore */ }
+  try { localStorage.setItem("glas.theme", next); } catch (_) { /* ignore */ }
   renderThemeButton();
 }
 
@@ -151,9 +167,7 @@ function parseRoute() {
   }
 }
 
-function readingAllowed() {
-  return !settings.requireLoginToRead || Boolean(state.user);
-}
+const readingAllowed = () => !settings.requireLoginToRead || Boolean(state.user);
 
 function clearRouteSubs() {
   routeSubs.forEach((u) => u && u());
@@ -259,6 +273,7 @@ function render() {
   renderAuthBox();
   renderSidebar();
   renderAside();
+  renderBottomNav();
 
   let html;
   if (!state.authReady) html = loadingView();
@@ -279,23 +294,25 @@ function render() {
 
 function updateTitle() {
   const r = state.route;
-  let t = "ETŠ forum";
-  if (r.name === "feed" && r.community) t = `${getCommunity(r.community).name} | ETŠ forum`;
-  else if (r.name === "post" && state.post) t = `${state.post.title} | ETŠ forum`;
-  else if (r.name === "new") t = "Nova objava | ETŠ forum";
-  else if (r.name === "user") t = `${r.username} | ETŠ forum`;
-  else if (r.name === "reports") t = "Prijave | ETŠ forum";
+  let t = "Glas: mesto za razgovor mladih";
+  if (r.name === "feed" && r.community) t = `${getCommunity(r.community).name} | Glas`;
+  else if (r.name === "post" && state.post) t = `${state.post.title} | Glas`;
+  else if (r.name === "new") t = "Nova objava | Glas";
+  else if (r.name === "user") t = `${r.username} | Glas`;
+  else if (r.name === "reports") t = "Prijave | Glas";
   document.title = t;
 }
+
+const newPostHref = () => `#/novo${state.route.name === "feed" && state.route.community ? "/" + enc(state.route.community) : ""}`;
 
 function renderAuthBox() {
   const box = $("#authbox");
   if (!state.authReady) { box.innerHTML = ""; return; }
-  const newBtn = `<a class="btn btn-primary" href="#/novo${state.route.community ? "/" + enc(state.route.community) : ""}">Nova objava</a>`;
+  const newBtn = `<a class="btn btn-primary hide-sm" href="${newPostHref()}">Nova objava</a>`;
   if (state.user) {
     box.innerHTML = `${newBtn}
-      <a class="user-link" href="#/u/${enc(state.user.username)}">${esc(state.user.username)}</a>
-      <button class="btn" type="button" data-action="logout">Odjavi se</button>`;
+      <a class="user-link" href="#/u/${enc(state.user.username)}">${avatar(state.user.username, "sm")}${esc(state.user.username)}</a>
+      <button class="btn hide-sm" type="button" data-action="logout">Odjavi se</button>`;
   } else {
     box.innerHTML = `${newBtn}
       <button class="btn" type="button" data-action="auth" data-value="login">Prijavi se</button>`;
@@ -304,17 +321,15 @@ function renderAuthBox() {
 
 function renderSidebar() {
   const r = state.route;
-  const current = (cond) => (cond ? ' aria-current="page"' : "");
+  const cur = (cond) => (cond ? ' aria-current="page"' : "");
   const reportsLink = state.user && state.user.isAdmin
-    ? `<li><a class="side-link" href="#/prijave"${current(r.name === "reports")}>Prijave${state.reports.length ? `<span class="count">${state.reports.length}</span>` : ""}</a></li>`
+    ? `<li><a class="side-link" href="#/prijave"${cur(r.name === "reports")}>${emo({ emoji: "🚩", color: "#FF4FA3" })}Prijave${state.reports.length ? `<span class="count">${state.reports.length}</span>` : ""}</a></li>`
     : "";
   $("#sidebar").innerHTML = `
     <h2 class="side-h">Forumi</h2>
     <ul>
-      <li><a class="side-link" href="#/"${current(r.name === "feed" && !r.community)}>${resistor(ALL_BANDS, 30)}Sve objave</a></li>
-      ${COMMUNITIES.map(
-        (c) => `<li><a class="side-link" href="#/f/${c.id}"${current(r.name === "feed" && r.community === c.id)}>${resistor(c.bands, 30)}${esc(c.name)}</a></li>`
-      ).join("")}
+      <li><a class="side-link" href="#/"${cur(r.name === "feed" && !r.community)}>${emo(ALL_FORUMS)}Sve objave</a></li>
+      ${COMMUNITIES.map((c) => `<li><a class="side-link" href="#/f/${c.id}"${cur(r.name === "feed" && r.community === c.id)}>${emo(c)}${esc(c.name)}</a></li>`).join("")}
       ${reportsLink}
     </ul>`;
 }
@@ -323,27 +338,40 @@ function renderAside() {
   const c = state.route.name === "feed" && state.route.community ? getCommunity(state.route.community) : null;
   $("#aside").innerHTML = `
     <div class="panel">
-      <h2>${c ? esc(c.name) : "O forumu"}</h2>
-      <p>${c ? esc(c.desc) : "Mesto za učenike Elektrotehničke škole „Stari grad“. Pitaj, objasni, pokaži šta si napravio."}</p>
-      <a class="btn btn-primary wide" href="#/novo${c ? "/" + c.id : ""}">Nova objava</a>
+      <h2>${c ? esc(c.name) : "O Glasu"}</h2>
+      <p>${c ? esc(c.desc) : "Mesto gde mladi pokreću teme o igricama, muzici, filmovima, sportu, mimovima i svemu ostalom."}</p>
+      <a class="btn btn-primary wide" href="${newPostHref()}">Šta ima novo?</a>
     </div>
     <div class="panel">
-      <h2>Pravila foruma</h2>
+      <h2>Pravila Glasa</h2>
       <ol>
-        <li>Poštuj druge. Vređanje se briše.</li>
-        <li>Ne objavljuj lične podatke, svoje ni tuđe.</li>
-        <li>Za zadatke pitaj kako se radi, ne traži gotovo rešenje.</li>
-        <li>Neprimeren sadržaj prijavi dugmetom „Prijavi“.</li>
+        <li>Zezanje da, vređanje ne.</li>
+        <li>Ne deli lične podatke, svoje ni tuđe.</li>
+        <li>Bez mržnje, pretnji i neprimerenog sadržaja.</li>
+        <li>Vidiš nešto sumnjivo? Prijavi.</li>
       </ol>
     </div>`;
+}
+
+function renderBottomNav() {
+  const r = state.route;
+  const cur = (cond) => (cond ? ' aria-current="page"' : "");
+  const profile = state.user
+    ? `<a class="bn-item" href="#/u/${enc(state.user.username)}"${cur(r.name === "user" && r.username.toLowerCase() === state.user.username.toLowerCase())}>${icon.user}Profil</a>`
+    : `<button class="bn-item" type="button" data-action="auth" data-value="login">${icon.user}Prijava</button>`;
+  $("#bottom-nav").innerHTML = `
+    <a class="bn-item" href="#/"${cur(r.name === "feed")}>${icon.home}Početna</a>
+    <button class="bn-item" type="button" data-action="forums">${icon.grid}Forumi</button>
+    <a class="bn-plus" href="${newPostHref()}" aria-label="Nova objava">${icon.plus}</a>
+    ${profile}`;
 }
 
 function renderBanner() {
   const el = $("#banner");
   if (backend.initError) {
-    el.innerHTML = `<div class="banner error"><strong>Firebase nije mogao da se učita.</strong> Proveri internet vezu i firebase-config.js. Zasad se prikazuje demo režim: objave se čuvaju samo u ovom pregledaču.</div>`;
+    el.innerHTML = `<div class="banner error"><strong>Firebase nije mogao da se učita.</strong> Proveri internet vezu i firebase-config.js. Zasad se prikazuje demo režim: teme se čuvaju samo u ovom pregledaču.</div>`;
   } else if (backend.mode === "demo") {
-    el.innerHTML = `<div class="banner"><strong>Demo režim.</strong> Objave se čuvaju samo u ovom pregledaču. Da forum bude zajednički za sve učenike, popuni firebase-config.js (uputstvo je u README.md).</div>`;
+    el.innerHTML = `<div class="banner"><strong>Demo režim.</strong> Teme se čuvaju samo u ovom pregledaču. Da Glas bude zajednički za sve, popuni firebase-config.js (uputstvo je u README.md).</div>`;
   } else {
     el.innerHTML = "";
   }
@@ -351,14 +379,12 @@ function renderBanner() {
 
 /* ---------- Pogledi ---------- */
 
-function loadingView() {
-  return `<div class="panel skeleton" aria-busy="true"><span></span><span></span><span></span></div>`;
-}
+const loadingView = () => `<div class="panel skeleton" aria-busy="true"><span></span><span></span><span></span></div>`;
 
 function gateView() {
   return `<div class="panel empty">
-    <h2>Forum je za učenike škole</h2>
-    <p>Prijavi se da vidiš objave i da učestvuješ u razgovoru.</p>
+    <h2>Glas je za članove</h2>
+    <p>Prijavi se da vidiš teme i da učestvuješ u razgovoru.</p>
     <button class="btn btn-primary" type="button" data-action="auth" data-value="login">Prijavi se</button>
   </div>`;
 }
@@ -376,11 +402,11 @@ function sortPosts(list) {
   return arr;
 }
 
-function voteColumn(kind, id, score, my) {
+function votePill(kind, id, score, my, small = false) {
   const cls = score > 0 ? "pos" : score < 0 ? "neg" : "";
-  return `<div class="votes" role="group" aria-label="Glasanje">
+  return `<div class="votes ${small ? "sm" : ""}" role="group" aria-label="Glasanje">
     <button class="vote up ${my === 1 ? "on" : ""}" id="vote-${kind}-${esc(id)}-up" type="button" data-action="vote" data-kind="${kind}" data-id="${esc(id)}" data-value="1" aria-pressed="${my === 1}" aria-label="Glasaj za">${icon.up}</button>
-    <span class="score ${cls}" aria-label="Ocena ${score}">${score}</span>
+    <span class="score ${cls}">${score}</span>
     <button class="vote down ${my === -1 ? "on" : ""}" id="vote-${kind}-${esc(id)}-down" type="button" data-action="vote" data-kind="${kind}" data-id="${esc(id)}" data-value="-1" aria-pressed="${my === -1}" aria-label="Glasaj protiv">${icon.down}</button>
   </div>`;
 }
@@ -388,39 +414,51 @@ function voteColumn(kind, id, score, my) {
 const canDelete = (item) => state.user && (state.user.uid === item.authorId || state.user.isAdmin);
 const canReport = (item) => !state.user || state.user.uid !== item.authorId;
 
-function postActions(p, full) {
-  return `<div class="post-actions">
-    ${full ? "" : `<a class="act" href="#/p/${esc(p.id)}">${icon.comment} ${pluralComments(p.commentCount || 0)}</a>`}
-    ${canReport(p) ? `<button class="act" type="button" data-action="report" data-type="post" data-id="${esc(p.id)}">${icon.flag} Prijavi</button>` : ""}
-    ${canDelete(p) ? `<button class="act danger" type="button" data-action="delete-post" data-id="${esc(p.id)}">${icon.trash} Obriši</button>` : ""}
-  </div>`;
+function postHead(p) {
+  const c = getCommunity(p.community);
+  return `<header class="post-head">
+    ${avatar(p.authorName)}
+    <div class="who">
+      <a class="name" href="#/u/${enc(p.authorName)}">${esc(p.authorName)}</a>
+      <div class="sub">
+        <a class="chip" href="#/f/${esc(c.id)}">${emo(c, "sm")}${esc(c.name)}</a>
+        <time datetime="${new Date(p.createdAt).toISOString()}">${ago(p.createdAt)}</time>
+      </div>
+    </div>
+  </header>`;
 }
 
-function postMeta(p) {
-  const c = getCommunity(p.community);
-  return `<div class="post-meta">
-    <a class="chip" href="#/f/${esc(c.id)}">${resistor(c.bands, 28)}${esc(c.name)}</a>
-    <span>objavio <a href="#/u/${enc(p.authorName)}">${esc(p.authorName)}</a></span>
-    <time datetime="${new Date(p.createdAt).toISOString()}">${ago(p.createdAt)}</time>
-  </div>`;
+function postMedia(p) {
+  if (!p.url) return "";
+  const img = isImageUrl(p.url)
+    ? `<img class="post-img" src="${esc(p.url)}" alt="Slika uz objavu" loading="lazy" referrerpolicy="no-referrer">`
+    : "";
+  return `${img}<a class="link-out" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer nofollow">${icon.link}${esc(img ? domainOf(p.url) : p.url.length > 60 ? domainOf(p.url) : p.url)}</a>`;
+}
+
+function postFoot(p, full) {
+  return `<footer class="post-foot">
+    ${votePill("posts", p.id, p.score, state.myVotes[p.id] || 0)}
+    ${full
+      ? `<span class="pill" aria-label="${pluralComments(p.commentCount || 0)}">${icon.comment} ${p.commentCount || 0}</span>`
+      : `<a class="pill" href="#/p/${esc(p.id)}" aria-label="${pluralComments(p.commentCount || 0)}">${icon.comment} ${p.commentCount || 0}</a>`}
+    ${canReport(p) ? `<button class="pill ghost" type="button" data-action="report" data-type="post" data-id="${esc(p.id)}">${icon.flag} Prijavi</button>` : ""}
+    ${canDelete(p) ? `<button class="pill ghost danger" type="button" data-action="delete-post" data-id="${esc(p.id)}">${icon.trash} Obriši</button>` : ""}
+  </footer>`;
 }
 
 function postRow(p) {
-  const my = state.myVotes[p.id] || 0;
   return `<article class="post">
-    ${voteColumn("posts", p.id, p.score, my)}
-    <div class="post-body">
-      ${postMeta(p)}
-      <h2 class="post-title"><a href="#/p/${esc(p.id)}">${esc(p.title)}</a></h2>
-      ${p.url ? `<a class="link-out" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer nofollow">${icon.link}${esc(domainOf(p.url))}</a>` : ""}
-      ${p.body ? `<p class="post-snippet">${esc(snippet(p.body))}</p>` : ""}
-      ${postActions(p, false)}
-    </div>
+    ${postHead(p)}
+    <h2 class="post-title"><a href="#/p/${esc(p.id)}">${esc(p.title)}</a></h2>
+    ${postMedia(p)}
+    ${p.body ? `<p class="post-snippet">${esc(snippet(p.body))}</p>` : ""}
+    ${postFoot(p, false)}
   </article>`;
 }
 
 function sortBar() {
-  const tabs = [["hot", "Popularno"], ["new", "Novo"], ["top", "Najbolje ocenjeno"]];
+  const tabs = [["hot", "Popularno"], ["new", "Novo"], ["top", "Najbolje"]];
   return `<div class="toolbar"><div class="seg" role="group" aria-label="Redosled">
     ${tabs.map(([v, l]) => `<button type="button" data-action="sort" data-value="${v}" aria-pressed="${state.sort === v}">${l}</button>`).join("")}
   </div></div>`;
@@ -428,9 +466,8 @@ function sortBar() {
 
 function feedView() {
   const r = state.route;
-  const known = !r.community || COMMUNITIES.some((c) => c.id === r.community);
-  if (!known) {
-    return `<div class="panel empty"><h2>Ovaj forum ne postoji</h2><p>Izaberi neki od foruma sa leve strane.</p><a class="btn" href="#/">Sve objave</a></div>`;
+  if (r.community && !COMMUNITIES.some((c) => c.id === r.community)) {
+    return `<div class="panel empty"><h2>Ovaj forum ne postoji</h2><p>Izaberi neki od foruma.</p><a class="btn" href="#/">Sve objave</a></div>`;
   }
   const c = r.community ? getCommunity(r.community) : null;
   const q = state.query.trim().toLowerCase();
@@ -440,7 +477,7 @@ function feedView() {
   list = sortPosts(list);
 
   const head = `<section class="feed-head">
-    <div class="feed-title">${resistor(c ? c.bands : ALL_BANDS, 52)}<h1>${c ? esc(c.name) : "Sve objave"}</h1></div>
+    <div class="feed-title">${emo(c || ALL_FORUMS, "lg")}<h1>${c ? esc(c.name) : "Sve objave"}</h1></div>
     ${c ? `<p class="feed-desc">${esc(c.desc)}</p>` : ""}
   </section>`;
 
@@ -452,9 +489,9 @@ function feedView() {
   } else if (!list.length) {
     body = q
       ? `<div class="panel empty"><h2>Nema rezultata za „${esc(state.query.trim())}“</h2><p>Probaj drugu reč ili pogledaj sve forume.</p></div>`
-      : `<div class="panel empty"><h2>Još nema objava</h2><p>Budi prvi koji će nešto objaviti${c ? ` na forumu ${esc(c.name)}` : ""}.</p><a class="btn btn-primary" href="#/novo${c ? "/" + c.id : ""}">Nova objava</a></div>`;
+      : `<div class="panel empty"><h2>Ovde je još tiho</h2><p>Pokreni prvu temu${c ? ` na forumu ${esc(c.name)}` : ""}.</p><a class="btn btn-primary" href="${newPostHref()}">Šta ima novo?</a></div>`;
   } else {
-    body = `<div class="panel feed">${list.map(postRow).join("")}</div>`;
+    body = `<div class="feed">${list.map(postRow).join("")}</div>`;
   }
   return head + sortBar() + body;
 }
@@ -462,17 +499,22 @@ function feedView() {
 function userView() {
   const name = state.route.username;
   const list = sortPosts(state.posts.filter((p) => p.authorName.toLowerCase() === name.toLowerCase()));
-  const head = `<section class="feed-head"><div class="feed-title"><h1>${esc(name)}</h1></div>
-    <p class="feed-desc">${pluralPosts(list.length)} među poslednjih 300 na forumu.</p></section>`;
+  const mine = state.user && state.user.username.toLowerCase() === name.toLowerCase();
+  const head = `<section class="profile-head">
+    ${avatar(name, "xl")}
+    <div>
+      <h1>${esc(name)}</h1>
+      <p class="feed-desc">${pluralPosts(list.length)} među poslednjih 300 na Glasu.</p>
+    </div>
+    ${mine ? `<button class="btn" type="button" data-action="logout" style="margin-left:auto">Odjavi se</button>` : ""}
+  </section>`;
   const body = !state.postsLoaded
     ? loadingView()
     : list.length
-      ? `<div class="panel feed">${list.map(postRow).join("")}</div>`
-      : `<div class="panel empty"><h2>Nema objava</h2><p>Ovaj korisnik još nije objavio ništa.</p></div>`;
+      ? `<div class="feed">${list.map(postRow).join("")}</div>`
+      : `<div class="panel empty"><h2>Nema objava</h2><p>Ovaj korisnik još nije pokrenuo nijednu temu.</p></div>`;
   return head + sortBar() + body;
 }
-
-const pluralPosts = (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "objava" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "objave" : "objava"}`;
 
 /* ---------- Objava i komentari ---------- */
 
@@ -483,29 +525,24 @@ function postView() {
   }
   const p = state.post;
   const c = getCommunity(p.community);
-  const my = state.myVotes[p.id] || 0;
 
-  const article = `<article class="panel post post-full">
-    ${voteColumn("posts", p.id, p.score, my)}
-    <div class="post-body">
-      ${postMeta(p)}
-      <h1 class="post-title">${esc(p.title)}</h1>
-      ${p.url ? `<a class="link-out" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer nofollow">${icon.link}${esc(p.url)}</a>` : ""}
-      ${p.body ? `<div class="prose">${formatBody(p.body)}</div>` : ""}
-      ${postActions(p, true)}
-    </div>
+  const article = `<article class="post post-full">
+    ${postHead(p)}
+    <h1 class="post-title">${esc(p.title)}</h1>
+    ${postMedia(p)}
+    ${p.body ? `<div class="prose">${formatBody(p.body)}</div>` : ""}
+    ${postFoot(p, true)}
   </article>`;
 
   const composer = state.user
     ? `<form class="panel composer" data-form="comment">
         <h2>Dodaj komentar</h2>
-        <textarea id="new-comment" name="body" rows="4" maxlength="${LIMITS.comment}" placeholder="Šta misliš o ovome?" aria-label="Komentar">${esc(state.draftComment)}</textarea>
+        <textarea id="new-comment" name="body" rows="4" maxlength="${LIMITS.comment}" placeholder="Šta ti je na umu?" aria-label="Komentar">${esc(state.draftComment)}</textarea>
         <div class="form-error" role="alert"></div>
         <button class="btn btn-primary" type="submit">Komentariši</button>
       </form>`
-    : `<div class="panel composer"><h2>Dodaj komentar</h2><p style="color:var(--ink-2);margin:6px 0 12px">Prijavi se da bi učestvovao u razgovoru.</p><button class="btn btn-primary" type="button" data-action="auth" data-value="login">Prijavi se</button></div>`;
+    : `<div class="panel composer"><h2>Dodaj komentar</h2><p style="color:var(--ink-2);margin:6px 0 12px">Prijavi se da uđeš u razgovor.</p><button class="btn btn-primary" type="button" data-action="auth" data-value="login">Prijavi se</button></div>`;
 
-  const tree = buildCommentTree();
   const count = state.comments.length;
   const comments = `<section class="panel comments" aria-label="Komentari">
     <div class="comments-head">
@@ -515,10 +552,10 @@ function postView() {
         <button type="button" data-action="csort" data-value="new" aria-pressed="${state.commentSort === "new"}">Najnoviji</button>
       </div>
     </div>
-    ${!state.commentsLoaded ? '<div class="skeleton"><span></span><span></span></div>' : count ? tree : `<p style="color:var(--ink-2)">Još nema komentara. Napiši prvi.</p>`}
+    ${!state.commentsLoaded ? '<div class="skeleton"><span></span><span></span></div>' : count ? buildCommentTree() : `<p style="color:var(--ink-2)">Još nema komentara. Napiši prvi.</p>`}
   </section>`;
 
-  return `<p class="crumbs"><a href="#/f/${esc(c.id)}">Nazad na forum ${esc(c.name)}</a></p>${article}${composer}${comments}`;
+  return `<p class="crumbs"><a href="#/f/${esc(c.id)}">Nazad na ${esc(c.name)}</a></p>${article}${composer}${comments}`;
 }
 
 function buildCommentTree() {
@@ -537,21 +574,17 @@ function buildCommentTree() {
     const kids = byParent[c.id] || [];
     const folded = state.collapsed.has(c.id);
     const my = state.myVotes[c.id] || 0;
-    const cls = ["comment", kids.length ? "" : "leaf", depth >= 5 ? "flat" : ""].filter(Boolean).join(" ");
-    const scoreCls = c.score > 0 ? "pos" : c.score < 0 ? "neg" : "";
+    const cls = ["comment", kids.length && !folded ? "" : "leaf", depth >= 5 ? "flat" : ""].filter(Boolean).join(" ");
     const author = c.deleted ? "[obrisano]" : `<a class="author" href="#/u/${enc(c.authorName)}">${esc(c.authorName)}</a>`;
+    const av = c.deleted ? `<span class="avatar sm" style="background:var(--surface-2)" aria-hidden="true"></span>` : avatar(c.authorName, "sm");
 
     let content = "";
     if (!folded) {
       const actions = c.deleted ? "" : `<div class="c-actions">
-          <span class="inline-votes">
-            <button class="vote up ${my === 1 ? "on" : ""}" id="vote-comments-${esc(c.id)}-up" type="button" data-action="vote" data-kind="comments" data-id="${esc(c.id)}" data-value="1" aria-pressed="${my === 1}" aria-label="Glasaj za">${icon.up}</button>
-            <span class="score ${scoreCls}" aria-label="Ocena ${c.score}">${c.score}</span>
-            <button class="vote down ${my === -1 ? "on" : ""}" id="vote-comments-${esc(c.id)}-down" type="button" data-action="vote" data-kind="comments" data-id="${esc(c.id)}" data-value="-1" aria-pressed="${my === -1}" aria-label="Glasaj protiv">${icon.down}</button>
-          </span>
-          <button class="act" type="button" data-action="reply-open" data-id="${esc(c.id)}">${icon.reply} Odgovori</button>
-          ${canReport(c) ? `<button class="act" type="button" data-action="report" data-type="comment" data-id="${esc(c.id)}">${icon.flag} Prijavi</button>` : ""}
-          ${canDelete(c) ? `<button class="act danger" type="button" data-action="delete-comment" data-id="${esc(c.id)}">${icon.trash} Obriši</button>` : ""}
+          ${votePill("comments", c.id, c.score, my, true)}
+          <button class="pill ghost" type="button" data-action="reply-open" data-id="${esc(c.id)}">${icon.reply} Odgovori</button>
+          ${canReport(c) ? `<button class="pill ghost" type="button" data-action="report" data-type="comment" data-id="${esc(c.id)}">${icon.flag} Prijavi</button>` : ""}
+          ${canDelete(c) ? `<button class="pill ghost danger" type="button" data-action="delete-comment" data-id="${esc(c.id)}">${icon.trash} Obriši</button>` : ""}
         </div>`;
       const replyForm = state.reply && state.reply.id === c.id
         ? `<form class="reply-form" data-form="reply" data-parent="${esc(c.id)}">
@@ -566,7 +599,7 @@ function buildCommentTree() {
     }
 
     return `<div class="${cls}" id="c-${esc(c.id)}">
-      <button class="thread" type="button" data-action="collapse" data-id="${esc(c.id)}" aria-label="${folded ? "Prikaži nit" : "Sakrij nit"}" aria-expanded="${!folded}"></button>
+      <button class="thread" type="button" data-action="collapse" data-id="${esc(c.id)}" aria-label="${folded ? "Prikaži nit" : "Sakrij nit"}" aria-expanded="${!folded}">${av}</button>
       <div class="c-main">
         <div class="c-head">${author}<time>${ago(c.createdAt)}</time>
           ${folded ? `<button class="collapse-note" type="button" data-action="collapse" data-id="${esc(c.id)}">Prikaži komentar${kids.length ? ` i ${kids.length} ${kids.length === 1 ? "odgovor" : "odgovora"}` : ""}</button>` : ""}
@@ -583,28 +616,28 @@ function buildCommentTree() {
 
 function newPostView() {
   if (!state.user) {
-    return `<div class="panel empty"><h2>Prijavi se da objaviš</h2><p>Za pisanje objava treba ti nalog. Pravi se za minut.</p>
+    return `<div class="panel empty"><h2>Prijavi se da pokreneš temu</h2><p>Nalog se pravi za minut.</p>
       <button class="btn btn-primary" type="button" data-action="auth" data-value="login">Prijavi se</button></div>`;
   }
   const d = state.draft;
   const options = COMMUNITIES.filter((c) => !c.adminOnly || state.user.isAdmin);
   return `<form class="panel new-post" data-form="newpost" novalidate>
-    <h1>Nova objava</h1>
+    <h1>Šta ima novo?</h1>
     <label class="field"><span>Forum</span>
       <select id="np-community" name="community" data-draft="community" required>
         <option value="" ${d.community ? "" : "selected"} disabled>Izaberi forum</option>
-        ${options.map((c) => `<option value="${c.id}" ${d.community === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}
+        ${options.map((c) => `<option value="${c.id}" ${d.community === c.id ? "selected" : ""}>${c.emoji} ${esc(c.name)}</option>`).join("")}
       </select>
     </label>
     <label class="field"><span>Naslov</span>
-      <input id="np-title" name="title" type="text" maxlength="${LIMITS.title}" data-draft="title" value="${esc(d.title)}" placeholder="Opiši u jednoj rečenici o čemu je objava" required>
+      <input id="np-title" name="title" type="text" maxlength="${LIMITS.title}" data-draft="title" value="${esc(d.title)}" placeholder="O čemu hoćeš da pričaš?" required>
     </label>
     <label class="field"><span>Tekst (nije obavezan)</span>
-      <textarea id="np-body" name="body" rows="9" maxlength="${LIMITS.body}" data-draft="body" placeholder="Ovde možeš detaljnije da objasniš">${esc(d.body)}</textarea>
+      <textarea id="np-body" name="body" rows="8" maxlength="${LIMITS.body}" data-draft="body" placeholder="Ovde možeš detaljnije">${esc(d.body)}</textarea>
     </label>
-    <label class="field"><span>Link (nije obavezan)</span>
+    <label class="field"><span>Link ili slika (nije obavezno)</span>
       <input id="np-url" name="url" type="url" maxlength="${LIMITS.url}" data-draft="url" value="${esc(d.url)}" placeholder="https://">
-      <small>Ne objavljuj lične podatke, svoje ni tuđe.</small>
+      <small>Link do slike (.jpg, .png, .gif, .webp) prikazuje se direktno u objavi. Ne objavljuj lične podatke, svoje ni tuđe.</small>
     </label>
     <div class="form-error" role="alert"></div>
     <div class="form-actions">
@@ -618,10 +651,10 @@ function newPostView() {
 
 function reportsView() {
   if (!state.user || !state.user.isAdmin) {
-    return `<div class="panel empty"><h2>Samo za administratore</h2><p>Ovu stranicu mogu da vide samo moderatori foruma.</p><a class="btn" href="#/">Nazad na forum</a></div>`;
+    return `<div class="panel empty"><h2>Samo za administratore</h2><p>Ovu stranicu mogu da vide samo moderatori.</p><a class="btn" href="#/">Nazad na Glas</a></div>`;
   }
-  const head = `<section class="feed-head"><div class="feed-title"><h1>Prijave</h1></div>
-    <p class="feed-desc">Sadržaj koji su učenici prijavili. Obriši ga ili odbaci prijavu.</p></section>`;
+  const head = `<section class="feed-head"><div class="feed-title">${emo({ emoji: "🚩", color: "#FF4FA3" }, "lg")}<h1>Prijave</h1></div>
+    <p class="feed-desc">Sadržaj koji su članovi prijavili. Obriši ga ili odbaci prijavu.</p></section>`;
   if (!state.reports.length) {
     return head + `<div class="panel empty"><h2>Nema prijava</h2><p>Kad neko prijavi objavu ili komentar, pojaviće se ovde.</p></div>`;
   }
@@ -654,10 +687,21 @@ function closeDialog() {
   if (d.open) d.close();
 }
 
+function forumsDialog() {
+  const r = state.route;
+  const cur = (cond) => (cond ? ' aria-current="page"' : "");
+  openDialog(`<h2>Forumi</h2>
+    <ul class="forum-list sidebar-list" style="list-style:none;padding:0;margin:0">
+      <li><a class="side-link" href="#/"${cur(r.name === "feed" && !r.community)}>${emo(ALL_FORUMS)}Sve objave</a></li>
+      ${COMMUNITIES.map((c) => `<li><a class="side-link" href="#/f/${c.id}"${cur(r.name === "feed" && r.community === c.id)}>${emo(c)}${esc(c.name)}</a></li>`).join("")}
+      ${state.user && state.user.isAdmin ? `<li><a class="side-link" href="#/prijave">${emo({ emoji: "🚩", color: "#FF4FA3" })}Prijave</a></li>` : ""}
+    </ul>`);
+}
+
 function authDialog(mode = "login", note = "") {
   const reg = mode === "register";
   const demoHint = backend.mode === "demo" && !reg
-    ? `<p class="demo-hint">Demo nalozi: <code>admin@demo.rs</code> / <code>admin123</code> (administrator) ili <code>marko_p@demo.rs</code> / <code>demo123</code>. Možeš i da napraviš svoj nalog.</p>`
+    ? `<p class="demo-hint">Demo nalozi: <code>admin@demo.rs</code> / <code>admin123</code> (administrator) ili <code>luka_g@demo.rs</code> / <code>demo123</code>. Možeš i da napraviš svoj nalog.</p>`
     : "";
   openDialog(`
     <div class="tabs" role="tablist">
@@ -687,7 +731,7 @@ function confirmDialog({ title, text, action, data }) {
 
 function reportDialog(type, id) {
   openDialog(`<h2>Prijavi ${type === "post" ? "objavu" : "komentar"}</h2>
-    <p>Moderatori će pregledati prijavu. Tvoje ime se ne prikazuje drugim učenicima.</p>
+    <p>Moderatori će pregledati prijavu. Tvoje ime se ne prikazuje drugim članovima.</p>
     <form data-form="report" data-type="${esc(type)}" data-id="${esc(id)}">
       <label class="field"><span>Razlog</span>
         <select name="reason" required>
@@ -744,11 +788,12 @@ async function runAction(el) {
 
   switch (a) {
     case "auth": return authDialog(v);
+    case "forums": return forumsDialog();
     case "close-dialog": return closeDialog();
     case "logout":
       await backend.logout();
       toast("Odjava uspešna");
-      if (state.route.name === "new" || state.route.name === "reports") location.hash = "#/";
+      if (["new", "reports", "user"].includes(state.route.name)) location.hash = "#/";
       return;
     case "vote": return handleVote(el.dataset.kind, id, Number(v));
     case "sort": state.sort = v; return render();
@@ -877,6 +922,8 @@ async function submitForm(form) {
 
 function bindEvents() {
   document.addEventListener("click", (e) => {
+    // Linkovi u dijalogu (npr. lista foruma) zatvaraju dijalog i normalno prate adresu.
+    if (e.target.closest("#dlg a")) { closeDialog(); return; }
     const el = e.target.closest("[data-action]");
     if (!el) return;
     e.preventDefault();
@@ -901,6 +948,12 @@ function bindEvents() {
     if (t.dataset && t.dataset.draft) state.draft[t.dataset.draft] = t.value;
   });
 
+  // Slika koja se ne učita ne sme da ostavi prazan okvir.
+  document.addEventListener("error", (e) => {
+    const t = e.target;
+    if (t && t.classList && t.classList.contains("post-img")) t.style.display = "none";
+  }, true);
+
   $("#dlg").addEventListener("click", (e) => {
     if (e.target === $("#dlg")) closeDialog();
   });
@@ -922,7 +975,6 @@ function bindEvents() {
 /* ------------------------------------------------------------------ */
 
 async function init() {
-  $("#brand-mark").innerHTML = resistor(ALL_BANDS, 40);
   renderThemeButton();
   bindEvents();
   state.route = parseRoute();
