@@ -1,6 +1,6 @@
 import { firebaseConfig, settings } from "./firebase-config.js";
 import { COMMUNITIES, ALL_FORUMS, FORUM_LIMITS, FORUM_COLORS, FORUM_EMOJIS, getCommunity, setCustomForums } from "./communities.js";
-import { createBackend, LIMITS } from "./db.js";
+import { createBackend, LIMITS, PHOTO_MAX } from "./db.js";
 
 /* ------------------------------------------------------------------ */
 /* Stanje                                                              */
@@ -126,8 +126,17 @@ function hue(name) {
   for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h % 360;
 }
-const avatar = (name, size = "") =>
-  `<span class="avatar ${size}" style="background:hsl(${hue(name)} 90% 68%)" aria-hidden="true">${esc(String(name || "?").charAt(0).toUpperCase())}</span>`;
+// Profilne slike: ime (malim slovima) -> data URL, ili "" ako nema slike. Učitavaju se po potrebi.
+const photos = {};
+const photoPending = new Set();
+const photoOf = (name) => photos[String(name || "").toLowerCase()] || "";
+
+const avatar = (name, size = "") => {
+  const ph = photoOf(name);
+  return `<span class="avatar ${size}" style="background:hsl(${hue(name)} 90% 68%)" aria-hidden="true">${
+    ph ? `<img src="${esc(ph)}" alt="">` : esc(String(name || "?").charAt(0).toUpperCase())
+  }</span>`;
+};
 const emo = (c, size = "") =>
   `<span class="emo ${size}" style="--c:${esc(c.color)}" aria-hidden="true">${esc(c.emoji)}</span>`;
 
@@ -303,6 +312,25 @@ function render() {
   $("#main").innerHTML = html;
   updateTitle();
   restore();
+  ensurePhotos();
+}
+
+function ensurePhotos() {
+  if (!backend || !readingAllowed()) return;
+  const names = new Set();
+  const add = (n) => { if (n) names.add(String(n).toLowerCase()); };
+  state.posts.forEach((p) => add(p.authorName));
+  state.comments.forEach((c) => !c.deleted && add(c.authorName));
+  if (state.post) add(state.post.authorName);
+  if (state.user) add(state.user.username);
+  if (state.route.name === "user") add(state.route.username);
+  const todo = [...names].filter((n) => !(n in photos) && !photoPending.has(n)).slice(0, 80);
+  if (!todo.length) return;
+  todo.forEach((n) => photoPending.add(n));
+  backend.loadPhotos(todo).then(
+    (map) => { todo.forEach((n) => { photos[n] = map[n] || ""; photoPending.delete(n); }); renderData(); },
+    () => { todo.forEach((n) => { photos[n] = ""; photoPending.delete(n); }); }
+  );
 }
 
 function updateTitle() {
@@ -333,9 +361,10 @@ function renderAuthBox() {
 }
 
 const newForumButton = () =>
-  state.user && state.user.isAdmin
-    ? `<button class="btn wide new-forum-btn" type="button" data-action="new-forum">+ Novi forum</button>`
-    : "";
+  `<button class="btn wide new-forum-btn" type="button" data-action="new-forum">+ Novi forum</button>`;
+
+const canDeleteForum = (c) =>
+  Boolean(c && c.custom && state.user && (state.user.isAdmin || c.createdBy === state.user.uid));
 
 function renderSidebar() {
   const r = state.route;
@@ -499,7 +528,7 @@ function feedView() {
   const head = `<section class="feed-head">
     <div class="feed-title">${emo(c || ALL_FORUMS, "lg")}<h1>${c ? esc(c.name) : "Sve objave"}</h1></div>
     ${c ? `<p class="feed-desc">${esc(c.desc)}</p>` : ""}
-    ${c && c.custom && state.user && state.user.isAdmin
+    ${canDeleteForum(c)
       ? `<button class="btn btn-small" type="button" data-action="delete-forum" data-id="${esc(c.id)}">Obriši forum</button>` : ""}
   </section>`;
 
@@ -528,8 +557,14 @@ function userView() {
       <h1>${esc(name)}</h1>
       <p class="feed-desc">${pluralPosts(list.length)} među poslednjih 300 na Glasu.</p>
     </div>
-    ${mine ? `<button class="btn" type="button" data-action="logout" style="margin-left:auto">Odjavi se</button>` : ""}
-  </section>`;
+    <div class="profile-actions">
+      ${mine ? `<label class="btn" for="photo-input" tabindex="0">${photoOf(name) ? "Promeni sliku" : "Dodaj sliku"}</label>
+        <input id="photo-input" type="file" accept="image/*" hidden>` : ""}
+      ${(mine || (state.user && state.user.isAdmin)) && photoOf(name)
+        ? `<button class="btn" type="button" data-action="remove-photo" data-id="${esc(name)}">Ukloni sliku</button>` : ""}
+      ${mine ? `<button class="btn" type="button" data-action="logout">Odjavi se</button>` : ""}
+    </div>
+  </section>${mine ? `<div class="form-error" id="photo-error" role="alert"></div>` : ""}`;
   const body = !state.postsLoaded
     ? loadingView()
     : list.length
@@ -762,7 +797,7 @@ function forumDialog() {
         <div class="emoji-row">${em}</div>
       </div>
       <div class="field"><span>Boja</span><div class="swatches">${sw}</div></div>
-      <label class="check"><input name="adminOnly" type="checkbox"> Objavljuju samo moderatori (kao Novosti)</label>
+      ${state.user && state.user.isAdmin ? `<label class="check"><input name="adminOnly" type="checkbox"> Objavljuju samo moderatori (kao Novosti)</label>` : ""}
       <div class="form-error" role="alert"></div>
       <div class="row">
         <button class="btn" type="button" data-action="close-dialog">Otkaži</button>
@@ -804,6 +839,50 @@ function reportDialog(type, id) {
 /* Radnje                                                              */
 /* ------------------------------------------------------------------ */
 
+// Slika se smanji na 128x128 (centrirano) i čuva kao mali JPEG, pa ne treba poseban prostor za slike.
+function resizeToJpeg(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      try {
+        for (const [side, q] of [[128, 0.82], [128, 0.65], [96, 0.7], [96, 0.5]]) {
+          const c = document.createElement("canvas");
+          c.width = c.height = side;
+          const ctx = c.getContext("2d");
+          const s = Math.min(img.width, img.height);
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, side, side);
+          ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, side, side);
+          const out = c.toDataURL("image/jpeg", q);
+          if (out.length <= PHOTO_MAX) return resolve(out);
+        }
+        reject(new Error("Slika je prevelika. Probaj drugu."));
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Ovu sliku ne mogu da otvorim. Probaj JPG ili PNG.")); };
+    img.src = url;
+  });
+}
+
+async function uploadPhoto(file) {
+  const box = document.getElementById("photo-error");
+  if (box) box.textContent = "";
+  try {
+    if (!state.user) return;
+    if (!/^image\//.test(file.type)) throw new Error("Izaberi sliku (JPG, PNG ili WebP).");
+    const dataUrl = await resizeToJpeg(file);
+    await backend.setPhoto(dataUrl);
+    photos[state.user.username.toLowerCase()] = dataUrl;
+    toast("Slika je promenjena");
+    render();
+  } catch (e) {
+    if (box) box.textContent = e.message || "Slika nije sačuvana.";
+    else toast(e.message || "Slika nije sačuvana.");
+  }
+}
+
 function needLogin(note) {
   if (state.user) return false;
   authDialog("login", note);
@@ -840,7 +919,7 @@ async function runAction(el) {
     case "auth": return authDialog(v);
     case "forums": return forumsDialog();
     case "new-forum":
-      if (!state.user || !state.user.isAdmin) return;
+      if (needLogin("Prijavi se da napraviš forum.")) return;
       return forumDialog();
     case "pick-emoji": { const i = document.getElementById("forum-emoji"); if (i) i.value = v; return; }
     case "delete-forum":
@@ -900,6 +979,14 @@ async function runAction(el) {
         else await backend.deleteComment(id);
         await backend.dismissReport(el.dataset.report);
         toast("Obrisano");
+      } catch (e) { toast(e.message); }
+      return;
+    case "remove-photo":
+      try {
+        await backend.removePhoto(id);
+        photos[String(id).toLowerCase()] = "";
+        toast("Slika uklonjena");
+        render();
       } catch (e) { toast(e.message); }
       return;
     case "dismiss-report":
@@ -1033,6 +1120,13 @@ function bindEvents() {
 
   $("#dlg").addEventListener("click", (e) => {
     if (e.target === $("#dlg")) closeDialog();
+  });
+
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "photo-input" && e.target.files && e.target.files[0]) {
+      uploadPhoto(e.target.files[0]);
+      e.target.value = "";
+    }
   });
 
   $("#theme-btn").addEventListener("click", toggleTheme);

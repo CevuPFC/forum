@@ -14,7 +14,9 @@
 //  vote(kind, id, value)              kind: "posts" | "comments", value: -1 | 0 | 1
 //  report({targetType,targetId,postId,reason,snippet}), dismissReport(id)
 //  subscribeForums(cb, errCb)         forumi koje su napravili moderatori
-//  createForum({name,desc,emoji,color,adminOnly}) -> id, deleteForum(id)   (samo admin)
+//  createForum({name,desc,emoji,color,adminOnly}) -> id    (svaki prijavljen korisnik; adminOnly samo admin)
+//  deleteForum(id)                    (autor foruma ili admin)
+//  loadPhotos(imena) -> {ime: dataUrl|""}, setPhoto(dataUrl), removePhoto(ime)   (profilne slike)
 
 import { COMMUNITIES, FORUM_LIMITS, isBuiltin, slugify } from "./communities.js";
 import { buildSeed } from "./seed.js";
@@ -85,8 +87,16 @@ function validatePost({ title, body, url, community }, isAdmin) {
   return { title: t, body: (body || "").trim(), url: u, community };
 }
 
+export const PHOTO_MAX = 20000; // najviše znakova u data URL-u (oko 15 KB slike)
+
+function validatePhoto(dataUrl) {
+  if (typeof dataUrl !== "string" || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(dataUrl))
+    throw fail("Slika nije ispravna. Izaberi JPG, PNG ili WebP.");
+  if (dataUrl.length > PHOTO_MAX) throw fail("Slika je prevelika. Probaj drugu.");
+  return dataUrl;
+}
+
 function validateForum({ name, desc, emoji, color, adminOnly }, isAdmin) {
-  if (!isAdmin) throw fail("Forume mogu da prave samo moderatori.");
   const n = (name || "").trim().replace(/\s+/g, " ");
   if (n.length < 2) throw fail("Naziv mora imati bar 2 znaka.");
   if (n.length > FORUM_LIMITS.name) throw fail(`Naziv može imati najviše ${FORUM_LIMITS.name} znakova.`);
@@ -98,7 +108,7 @@ function validateForum({ name, desc, emoji, color, adminOnly }, isAdmin) {
   const e = (emoji || "").trim() || "💬";
   if (e.length > 8) throw fail("Za ikonu upiši samo jedan emoji.");
   const col = /^#[0-9A-Fa-f]{6}$/.test(color || "") ? color : "#6D4AFF";
-  return { id, name: n, desc: d, emoji: e, color: col, adminOnly: Boolean(adminOnly) };
+  return { id, name: n, desc: d, emoji: e, color: col, adminOnly: isAdmin && Boolean(adminOnly) };
 }
 
 function validateComment(body) {
@@ -305,6 +315,42 @@ async function createFirebaseBackend(config) {
       need();
       try {
         await deleteDoc(doc(db, "forums", id));
+      } catch (e) {
+        throw friendlyError(e);
+      }
+    },
+
+    async loadPhotos(names) {
+      const out = {};
+      await Promise.all(
+        names.map(async (n) => {
+          try {
+            const d = await getDoc(doc(db, "profiles", n));
+            out[n] = d.exists() && typeof d.data().photo === "string" ? d.data().photo : "";
+          } catch (_) {
+            out[n] = "";
+          }
+        })
+      );
+      return out;
+    },
+
+    async setPhoto(dataUrl) {
+      const me = need();
+      const photo = validatePhoto(dataUrl);
+      try {
+        await setDoc(doc(db, "profiles", me.username.toLowerCase()), { photo, updatedAt: serverTimestamp() });
+      } catch (e) {
+        if (e && e.code === "permission-denied")
+          throw fail("Slika nije sačuvana. Proveri da li su najnovija pravila objavljena u Firebase konzoli.");
+        throw friendlyError(e);
+      }
+    },
+
+    async removePhoto(name) {
+      need();
+      try {
+        await deleteDoc(doc(db, "profiles", String(name).toLowerCase()));
       } catch (e) {
         throw friendlyError(e);
       }
@@ -533,8 +579,31 @@ function createDemoBackend() {
 
     async deleteForum(id) {
       const m = need();
-      if (!m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
-      data.forums = (data.forums || []).filter((f) => f.id !== id);
+      const f = (data.forums || []).find((x) => x.id === id);
+      if (f && f.createdBy !== m.uid && !m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
+      data.forums = (data.forums || []).filter((x) => x.id !== id);
+      save();
+    },
+
+    async loadPhotos(names) {
+      const out = {};
+      names.forEach((n) => (out[n] = (data.profiles && data.profiles[n]) || ""));
+      return out;
+    },
+
+    async setPhoto(dataUrl) {
+      const m = need();
+      const photo = validatePhoto(dataUrl);
+      data.profiles = data.profiles || {};
+      data.profiles[m.username.toLowerCase()] = photo;
+      save();
+    },
+
+    async removePhoto(name) {
+      const m = need();
+      const key = String(name).toLowerCase();
+      if (key !== m.username.toLowerCase() && !m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
+      if (data.profiles) delete data.profiles[key];
       save();
     },
 

@@ -113,6 +113,7 @@ export function setCustomForums(list) {
       color: COLOR_RE.test(f.color || "") ? f.color : "#8B7CFF",
       adminOnly: f.adminOnly === true,
       custom: true,
+      createdBy: f.createdBy || "",
       createdAt: f.createdAt || 0,
     }))
     .sort((a, b) => a.createdAt - b.createdAt);
