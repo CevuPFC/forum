@@ -1,6 +1,7 @@
 import { firebaseConfig, settings } from "./firebase-config.js";
 import { COMMUNITIES, ALL_FORUMS, FORUM_LIMITS, FORUM_COLORS, FORUM_EMOJIS, getCommunity, setCustomForums } from "./communities.js";
 import { createBackend, LIMITS, PHOTO_MAX } from "./db.js";
+import { uploads } from "./uploads-config.js";
 
 /* ------------------------------------------------------------------ */
 /* Stanje                                                              */
@@ -27,8 +28,9 @@ const state = {
   collapsed: new Set(),
   reply: null, // { id, text }
   draftComment: "",
-  draft: { community: "", title: "", body: "", url: "" },
+  draft: { community: "", title: "", body: "", url: "", image: "" },
   busy: new Set(),
+  uploading: false,
 };
 
 let unsubPosts = null;
@@ -76,6 +78,18 @@ function domainOf(url) {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch (_) {
     return url;
+  }
+}
+
+const uploadsEnabled = Boolean(uploads && uploads.cloudName && uploads.uploadPreset);
+const MEDIA_LIMITS = { image: 10 * 1024 * 1024, video: 100 * 1024 * 1024 }; // ograničenja besplatnog Cloudinary naloga
+
+function isVideoUrl(url) {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) && /\.(mp4|webm|mov|m4v|ogv)$/i.test(u.pathname);
+  } catch (_) {
+    return false;
   }
 }
 
@@ -208,7 +222,7 @@ function onRoute() {
     const wanted = state.route.community;
     const ok = COMMUNITIES.find((c) => c.id === wanted);
     if (prev.name !== "new" || (ok && state.draft.community !== wanted)) {
-      state.draft = { community: ok ? wanted : state.draft.community || "", title: "", body: "", url: "" };
+      state.draft = { community: ok ? wanted : state.draft.community || "", title: "", body: "", url: "", image: "" };
     }
   }
 
@@ -313,6 +327,7 @@ function render() {
   updateTitle();
   restore();
   ensurePhotos();
+  observeImages();
 }
 
 function ensurePhotos() {
@@ -477,11 +492,21 @@ function postHead(p) {
 }
 
 function postMedia(p) {
-  if (!p.url) return "";
-  const img = isImageUrl(p.url)
-    ? `<img class="post-img" src="${esc(p.url)}" alt="Slika uz objavu" loading="lazy" referrerpolicy="no-referrer">`
+  const own = p.imageId
+    ? (images[p.imageId]
+        ? `<img class="post-img" src="${esc(images[p.imageId])}" alt="Slika uz objavu">`
+        : p.imageId in images ? "" : `<div class="post-img img-ph" data-img-id="${esc(p.imageId)}" aria-label="Slika se učitava"></div>`)
     : "";
-  return `${img}<a class="link-out" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer nofollow">${icon.link}${esc(img ? domainOf(p.url) : p.url.length > 60 ? domainOf(p.url) : p.url)}</a>`;
+  if (!p.url) return own;
+  const yt = youtubeId(p.url);
+  const img = yt
+    ? `<div class="yt"><iframe src="https://www.youtube-nocookie.com/embed/${yt}" title="YouTube video" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`
+    : isImageUrl(p.url)
+    ? `<img class="post-img" src="${esc(p.url)}" alt="Slika uz objavu" loading="lazy" referrerpolicy="no-referrer">`
+    : isVideoUrl(p.url)
+      ? `<video class="post-video" src="${esc(p.url)}" controls preload="metadata" playsinline></video>`
+      : "";
+  return `${own}${img}<a class="link-out" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer nofollow">${icon.link}${esc(img ? domainOf(p.url) : p.url.length > 60 ? domainOf(p.url) : p.url)}</a>`;
 }
 
 function postFoot(p, full) {
@@ -671,6 +696,192 @@ function buildCommentTree() {
 
 /* ---------- Nova objava ---------- */
 
+/* ---------- Otpremanje na Cloudinary (kad je podešen u uploads-config.js) ---------- */
+
+const PICK_HINT = () => (uploadsEnabled ? "Slika do 10 MB ili video do 100 MB." : "Slika se automatski smanji.");
+
+function downscaleImage(file) {
+  // Fotografije se smanje na najviše 1600 px pre slanja: brže je i staje u ograničenje.
+  return new Promise((resolve) => {
+    if (file.type === "image/gif") return resolve(file);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k);
+      c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob((b) => resolve(b && b.size < file.size ? new File([b], "slika.jpg", { type: "image/jpeg" }) : file), "image/jpeg", 0.86);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+function sendToCloudinary(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("upload_preset", uploads.uploadPreset);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `https://api.cloudinary.com/v1_1/${encodeURIComponent(uploads.cloudName)}/auto/upload`);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onerror = () => reject(new Error("Otpremanje nije uspelo. Proveri internet vezu."));
+    xhr.onload = () => {
+      let res = null;
+      try { res = JSON.parse(xhr.responseText); } catch (_) { /* ignore */ }
+      if (xhr.status >= 200 && xhr.status < 300 && res && res.public_id) return resolve(res);
+      const msg = res && res.error && res.error.message;
+      reject(new Error(msg ? `Otpremanje nije uspelo: ${msg}` : "Otpremanje nije uspelo. Probaj ponovo."));
+    };
+    xhr.send(fd);
+  });
+}
+
+function mediaUrlFrom(res) {
+  const base = `https://res.cloudinary.com/${encodeURIComponent(uploads.cloudName)}`;
+  const v = res.version ? `v${res.version}/` : "";
+  if (res.resource_type === "video") {
+    const ok = /^(mp4|webm|ogv)$/i.test(res.format || "");
+    return `${base}/video/upload/${v}${res.public_id}.${ok ? res.format : "mp4"}`;
+  }
+  return `${base}/image/upload/c_limit,w_1600,q_auto/${v}${res.public_id}.${res.format === "gif" ? "gif" : "jpg"}`;
+}
+
+async function uploadMedia(file) {
+  const say = (t, err = false) => { const s = document.getElementById("np-upload-status"); if (s) { s.textContent = t; s.classList.toggle("err", err); } };
+  if (state.uploading) return;
+  const isVideo = /^video\//.test(file.type);
+  const isImage = /^image\//.test(file.type);
+  if (!isVideo && !isImage) return say("Izaberi sliku ili video.", true);
+  if (isVideo && file.size > MEDIA_LIMITS.video) return say("Video je veći od 100 MB. Izaberi manji.", true);
+  state.uploading = true;
+  const btn = document.querySelector('form[data-form="newpost"] button[type="submit"]');
+  if (btn) btn.disabled = true;
+  try {
+    say("Priprema…");
+    const toSend = isImage ? await downscaleImage(file) : file;
+    if (isImage && toSend.size > MEDIA_LIMITS.image) throw new Error("Slika je veća od 10 MB. Izaberi manju.");
+    const res = await sendToCloudinary(toSend, (p) => say(`Otpremanje ${p}%`));
+    const url = mediaUrlFrom(res);
+    if (url.length > LIMITS.url) throw new Error("Adresa fajla je predugačka. Probaj drugi fajl.");
+    state.draft.url = url;
+    state.draft.image = "";
+    const input = document.getElementById("np-url");
+    if (input) input.value = url;
+    const pv = document.getElementById("np-preview");
+    if (pv) pv.innerHTML = draftPreview();
+    say("Gotovo. Fajl će biti uz objavu.");
+  } catch (e) {
+    say(e.message || "Otpremanje nije uspelo.", true);
+  } finally {
+    state.uploading = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+function pickMedia(file) {
+  return uploadsEnabled ? uploadMedia(file) : pickPostImage(file);
+}
+
+/* ---------- Slike uz objavu (čuvaju se u bazi kad Cloudinary nije podešen) ---------- */
+
+const IMAGE_MAX_CHARS = 250000; // data URL; pravila baze dozvoljavaju do 300000
+
+// Fotografija se smanji (najduža strana do 1000 px) i čuva kao JPEG koji staje u dokument baze.
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      try {
+        for (const [max, q] of [[1000, 0.8], [1000, 0.65], [800, 0.6], [640, 0.5], [480, 0.5]]) {
+          const k = Math.min(1, max / Math.max(img.width, img.height));
+          const c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(img.width * k));
+          c.height = Math.max(1, Math.round(img.height * k));
+          const ctx = c.getContext("2d");
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, c.width, c.height);
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          const out = c.toDataURL("image/jpeg", q);
+          if (out.length <= IMAGE_MAX_CHARS) return resolve(out);
+        }
+        reject(new Error("Slika je prevelika. Probaj drugu."));
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Ovu sliku ne mogu da otvorim. Probaj JPG ili PNG.")); };
+    img.src = url;
+  });
+}
+
+async function pickPostImage(file) {
+  const say = (t, err = false) => { const s = document.getElementById("np-upload-status"); if (s) { s.textContent = t; s.classList.toggle("err", err); } };
+  if (!/^image\//.test(file.type)) return say("Izaberi sliku (JPG, PNG ili WebP).", true);
+  try {
+    say("Priprema slike…");
+    state.draft.image = await shrinkImage(file);
+    const pv = document.getElementById("np-preview");
+    if (pv) pv.innerHTML = draftPreview();
+    say("Slika je spremna.");
+  } catch (e) {
+    say(e.message || "Slika nije učitana.", true);
+  }
+}
+
+// Slike iz baze se učitavaju tek kad se približe ekranu, da lista objava ostane brza.
+const images = {};
+const imagePending = new Set();
+let imageObserver = null;
+
+function loadImage(id) {
+  if (id in images || imagePending.has(id) || !backend) return;
+  imagePending.add(id);
+  backend.loadImages([id]).then(
+    (m) => { images[id] = m[id] || ""; imagePending.delete(id); renderData(); },
+    () => { images[id] = ""; imagePending.delete(id); renderData(); }
+  );
+}
+
+function observeImages() {
+  if (imageObserver) imageObserver.disconnect();
+  const nodes = [...document.querySelectorAll("[data-img-id]")].filter((n) => !(n.dataset.imgId in images));
+  if (!nodes.length) return;
+  if (!("IntersectionObserver" in window)) return nodes.forEach((n) => loadImage(n.dataset.imgId));
+  imageObserver = new IntersectionObserver((entries) => {
+    entries.forEach((e) => { if (e.isIntersecting) { loadImage(e.target.dataset.imgId); imageObserver.unobserve(e.target); } });
+  }, { rootMargin: "500px" });
+  nodes.forEach((n) => imageObserver.observe(n));
+}
+
+function youtubeId(url) {
+  try {
+    const u = new URL(url);
+    const h = u.hostname.replace(/^www\.|^m\./, "");
+    let id = "";
+    if (h === "youtu.be") id = u.pathname.slice(1).split("/")[0];
+    else if (h === "youtube.com" || h === "music.youtube.com") {
+      if (u.pathname === "/watch") id = u.searchParams.get("v") || "";
+      else { const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([^/]+)/); id = m ? m[1] : ""; }
+    }
+    return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function draftPreview() {
+  const d = state.draft;
+  let el = "";
+  if (d.image) el = `<img class="upload-preview" src="${esc(d.image)}" alt="Pregled slike">`;
+  else if (isImageUrl(d.url)) el = `<img class="upload-preview" src="${esc(d.url)}" alt="Pregled slike" referrerpolicy="no-referrer">`;
+  else if (isVideoUrl(d.url)) el = `<video class="upload-preview" src="${esc(d.url)}" controls preload="metadata" playsinline></video>`;
+  return el ? `${el}<button class="btn btn-small" type="button" data-action="clear-media">Ukloni</button>` : "";
+}
+
 function newPostView() {
   if (!state.user) {
     return `<div class="panel empty"><h2>Prijavi se da pokreneš temu</h2><p>Nalog se pravi za minut.</p>
@@ -692,9 +903,18 @@ function newPostView() {
     <label class="field"><span>Tekst (nije obavezan)</span>
       <textarea id="np-body" name="body" rows="8" maxlength="${LIMITS.body}" data-draft="body" placeholder="Ovde možeš detaljnije">${esc(d.body)}</textarea>
     </label>
-    <label class="field"><span>Link ili slika (nije obavezno)</span>
+    <div class="field">
+      <span>${uploadsEnabled ? "Slika ili video (nije obavezno)" : "Slika (nije obavezno)"}</span>
+      <div class="upload-row">
+        <label class="btn" for="np-file" tabindex="0">${uploadsEnabled ? "Dodaj sliku ili video" : "Dodaj sliku"}</label>
+        <input id="np-file" type="file" accept="${uploadsEnabled ? "image/*,video/*" : "image/*"}" hidden>
+        <span class="upload-status" id="np-upload-status" aria-live="polite">${state.uploading ? "Otpremanje u toku…" : PICK_HINT()}</span>
+      </div>
+      <div id="np-preview">${draftPreview()}</div>
+    </div>
+    <label class="field"><span>Link (nije obavezno)</span>
       <input id="np-url" name="url" type="url" maxlength="${LIMITS.url}" data-draft="url" value="${esc(d.url)}" placeholder="https://">
-      <small>Link do slike (.jpg, .png, .gif, .webp) prikazuje se direktno u objavi. Ne objavljuj lične podatke, svoje ni tuđe.</small>
+      <small>YouTube link se prikazuje kao video. Link do slike (.jpg, .png, .gif, .webp) prikazuje se direktno u objavi. Ne objavljuj lične podatke, svoje ni tuđe.</small>
     </label>
     <div class="form-error" role="alert"></div>
     <div class="form-actions">
@@ -918,6 +1138,19 @@ async function runAction(el) {
   switch (a) {
     case "auth": return authDialog(v);
     case "forums": return forumsDialog();
+    case "clear-media": {
+      state.draft.image = "";
+      if (isImageUrl(state.draft.url) || isVideoUrl(state.draft.url)) {
+        state.draft.url = "";
+        const input = document.getElementById("np-url");
+        if (input) input.value = "";
+      }
+      const pv = document.getElementById("np-preview");
+      if (pv) pv.innerHTML = draftPreview();
+      const st = document.getElementById("np-upload-status");
+      if (st) { st.textContent = PICK_HINT(); st.classList.remove("err"); }
+      return;
+    }
     case "new-forum":
       if (needLogin("Prijavi se da napraviš forum.")) return;
       return forumDialog();
@@ -1037,13 +1270,15 @@ async function submitForm(form) {
         break;
       }
       case "newpost": {
+        if (state.uploading) throw new Error("Sačekaj da se otpremanje završi.");
         const id = await backend.createPost({
+          imageData: state.draft.image || "",
           title: String(fd.get("title")),
           body: String(fd.get("body")),
           url: String(fd.get("url")),
           community: String(fd.get("community") || ""),
         });
-        state.draft = { community: state.draft.community, title: "", body: "", url: "" };
+        state.draft = { community: state.draft.community, title: "", body: "", url: "", image: "" };
         toast("Objavljeno");
         location.hash = `#/p/${id}`;
         break;
@@ -1123,6 +1358,11 @@ function bindEvents() {
   });
 
   document.addEventListener("change", (e) => {
+    if (e.target.id === "np-file" && e.target.files && e.target.files[0]) {
+      pickMedia(e.target.files[0]);
+      e.target.value = "";
+      return;
+    }
     if (e.target.id === "photo-input" && e.target.files && e.target.files[0]) {
       uploadPhoto(e.target.files[0]);
       e.target.value = "";

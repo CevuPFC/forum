@@ -10,6 +10,7 @@ rules_version = '2';
 //  - brisati mogu autor i administratori; administrator je onaj čiji UID postoji u kolekciji "admins"
 //  - samo administratori mogu da objavljuju na forumu "novosti" i da čitaju prijave
 //  - svaki prijavljen korisnik može da napravi novi forum (kolekcija "forums"); brišu ga autor i administratori
+//  - slike uz objave (kolekcija "images") i profilne slike (kolekcija "profiles") su mali JPEG-ovi u bazi
 //  - profilnu sliku (kolekcija "profiles") menja samo vlasnik naloga; brisati je može i administrator
 
 service cloud.firestore {
@@ -90,6 +91,20 @@ service cloud.firestore {
       allow delete: if signedIn() && (resource.data.createdBy == request.auth.uid || isAdmin());
     }
 
+    // Slike uz objave: mali JPEG (data URL), objavi ga autor objave, briše autor ili administrator.
+    match /images/{imageId} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['data', 'authorId', 'createdAt'])
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.data is string
+        && request.resource.data.data.size() <= 300000
+        && request.resource.data.data.matches('^data:image/jpeg;base64,[A-Za-z0-9+/=]+$')
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if signedIn() && (resource.data.authorId == request.auth.uid || isAdmin());
+    }
+
     // Profilne slike: ID dokumenta je korisničko ime malim slovima. Slika je mali JPEG (data URL).
     match /profiles/{name} {
       allow read: if true;
@@ -141,7 +156,7 @@ service cloud.firestore {
 
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(
-             ['title', 'body', 'url', 'community', 'authorId', 'authorName', 'createdAt', 'score', 'commentCount'])
+             ['title', 'body', 'url', 'community', 'authorId', 'authorName', 'createdAt', 'score', 'commentCount', 'imageId'])
         && request.resource.data.authorId == request.auth.uid
         && request.resource.data.authorName == myName()
         && request.resource.data.title is string
@@ -154,6 +169,7 @@ service cloud.firestore {
         && (request.resource.data.url == '' || request.resource.data.url.matches('^https?://.+'))
         && isValidCommunity(request.resource.data.community)
         && (!adminOnlyForum(request.resource.data.community) || isAdmin())
+        && (!('imageId' in request.resource.data) || (request.resource.data.imageId is string && request.resource.data.imageId.size() <= 40))
         && request.resource.data.score == 0
         && request.resource.data.commentCount == 0
         && request.resource.data.createdAt == request.time;

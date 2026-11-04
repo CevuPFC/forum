@@ -9,7 +9,8 @@
 //  subscribePosts(cb, errCb), subscribePost(id, cb, errCb)
 //  subscribeComments(postId, cb, errCb), subscribeMyVotes(uid, cb)
 //  subscribeReports(cb, errCb)                          (samo admin)
-//  createPost({title,body,url,community}) -> id
+//  createPost({title,body,url,community,imageData}) -> id   (imageData: JPEG data URL, nije obavezno)
+//  loadImages(ids) -> {id: dataUrl|""}
 //  deletePost(id), createComment({postId,parentId,body}), deleteComment(id)
 //  vote(kind, id, value)              kind: "posts" | "comments", value: -1 | 0 | 1
 //  report({targetType,targetId,postId,reason,snippet}), dismissReport(id)
@@ -87,7 +88,16 @@ function validatePost({ title, body, url, community }, isAdmin) {
   return { title: t, body: (body || "").trim(), url: u, community };
 }
 
+export const IMAGE_MAX = 300000; // najviše znakova u data URL-u slike uz objavu
 export const PHOTO_MAX = 20000; // najviše znakova u data URL-u (oko 15 KB slike)
+
+function validateImageData(dataUrl) {
+  if (!dataUrl) return "";
+  if (typeof dataUrl !== "string" || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(dataUrl))
+    throw fail("Slika nije ispravna. Izaberi JPG, PNG ili WebP.");
+  if (dataUrl.length > IMAGE_MAX) throw fail("Slika je prevelika. Probaj drugu.");
+  return dataUrl;
+}
 
 function validatePhoto(dataUrl) {
   if (typeof dataUrl !== "string" || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(dataUrl))
@@ -359,25 +369,58 @@ async function createFirebaseBackend(config) {
     async createPost(input) {
       const me = need();
       const p = validatePost(input, me.isAdmin);
+      const image = validateImageData(input.imageData);
       try {
-        const ref = await addDoc(collection(db, "posts"), {
+        const postRef = doc(collection(db, "posts"));
+        const post = {
           ...p,
           authorId: me.uid,
           authorName: me.username,
           createdAt: serverTimestamp(),
           score: 0,
           commentCount: 0,
-        });
-        return ref.id;
+        };
+        if (!image) {
+          await setDoc(postRef, post);
+          return postRef.id;
+        }
+        const imgRef = doc(collection(db, "images"));
+        const batch = writeBatch(db);
+        batch.set(imgRef, { data: image, authorId: me.uid, createdAt: serverTimestamp() });
+        batch.set(postRef, { ...post, imageId: imgRef.id });
+        await batch.commit();
+        return postRef.id;
       } catch (e) {
+        if (e && e.code === "permission-denied" && image)
+          throw fail("Slika nije sačuvana. Proveri da li su najnovija pravila objavljena u Firebase konzoli.");
         throw friendlyError(e);
       }
+    },
+
+    async loadImages(ids) {
+      const out = {};
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const d = await getDoc(doc(db, "images", id));
+            out[id] = d.exists() && typeof d.data().data === "string" ? d.data().data : "";
+          } catch (_) {
+            out[id] = "";
+          }
+        })
+      );
+      return out;
     },
 
     async deletePost(id) {
       need();
       try {
-        await deleteDoc(doc(db, "posts", id));
+        const snap = await getDoc(doc(db, "posts", id));
+        const imageId = snap.exists() ? snap.data().imageId : null;
+        const batch = writeBatch(db);
+        batch.delete(doc(db, "posts", id));
+        if (imageId) batch.delete(doc(db, "images", imageId));
+        await batch.commit();
       } catch (e) {
         throw friendlyError(e);
       }
@@ -591,6 +634,12 @@ function createDemoBackend() {
       return out;
     },
 
+    async loadImages(ids) {
+      const out = {};
+      ids.forEach((id) => (out[id] = (data.images && data.images[id]) || ""));
+      return out;
+    },
+
     async setPhoto(dataUrl) {
       const m = need();
       const photo = validatePhoto(dataUrl);
@@ -610,10 +659,16 @@ function createDemoBackend() {
     async createPost(input) {
       const m = need();
       const p = validatePost(input, m.isAdmin);
+      const image = validateImageData(input.imageData);
       const post = {
         id: newId(), ...p, authorId: m.uid, authorName: m.username,
         createdAt: Date.now(), score: 0, commentCount: 0,
       };
+      if (image) {
+        data.images = data.images || {};
+        post.imageId = newId();
+        data.images[post.imageId] = image;
+      }
       data.posts.push(post);
       save();
       return post.id;
@@ -624,6 +679,7 @@ function createDemoBackend() {
       const p = data.posts.find((x) => x.id === id);
       if (!p) return;
       if (p.authorId !== m.uid && !m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
+      if (p.imageId && data.images) delete data.images[p.imageId];
       data.posts = data.posts.filter((x) => x.id !== id);
       data.comments = data.comments.filter((c) => c.postId !== id);
       save();

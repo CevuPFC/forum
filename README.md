@@ -44,6 +44,20 @@ Moduli ne rade sa `file://`, pa fajl ne otvaraj dvoklikom. Pokreni ga preko Live
 
 Administratore ne može da doda niko preko sajta, samo ti u konzoli.
 
+## Slike i video
+
+Preporučeno: **Cloudinary** (besplatan nalog, bez kartice; slike do 10 MB, video do 100 MB). Fajlovi se čuvaju kod njih, a u Firebase ide samo adresa.
+
+1. Napravi besplatan nalog na cloudinary.com.
+2. U **Dashboard** (ili Settings > API Keys) nađi **Cloud name**.
+3. **Settings > Upload > Upload presets > Add upload preset**: ime npr. `glas_unsigned`, **Signing mode = Unsigned**. U **Allowed formats** možeš da upišeš `jpg,png,gif,webp,heic,mp4,mov,webm`. Sačuvaj.
+4. U `uploads-config.js` upiši `cloudName` i `uploadPreset` i okači fajl na GitHub.
+5. Na formi „Šta ima novo?“ dugme postaje „Dodaj sliku ili video“. Slika se pre slanja smanji na najviše 1600 px.
+
+Besplatan nalog ima mesečno ograničenje (oko 25 GB prostora i prenosa). Fajlove koje korisnici otpreme brišeš u Cloudinary konzoli (**Media Library**); brisanje objave na Glasu ne briše fajl tamo.
+
+Dok `uploads-config.js` ostane prazan, Glas radi i bez Cloudinary-ja: slike se smanje i čuvaju u Firestore kolekciji `images` (oko 100–250 KB po slici), a video je moguć samo kao YouTube link (prikazuje se kao plejer). Profilne slike se uvek čuvaju u kolekciji `profiles`.
+
 ## Objava na GitHub Pages
 
 1. Okači sve fajlove iz ovog foldera u GitHub repozitorijum (`index.html` mora biti u korenu).
@@ -76,6 +90,7 @@ Ovo je forum za maloletne učenike, pa razmisli o ovome pre otvaranja:
 | `index.html`, `style.css` | Stranica i izgled |
 | `app.js` | Ceo interfejs foruma |
 | `db.js` | Veza sa Firebase-om i demo režim |
+| `uploads-config.js` | Podaci za Cloudinary (slike i video) |
 | `communities.js` | Lista foruma, emoji i boje |
 | `seed.js` | Probne objave za demo režim |
 | `firebase-config.js` | Tvoja Firebase konfiguracija |
