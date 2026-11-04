@@ -1,7 +1,10 @@
 // Forumi (kao "subreddit"-i). Svaki forum ima emoji i boju.
-// Ako dodaš ili izbrišeš forum, ažuriraj i listu u firestore.rules (isValidCommunity).
+//
+// BUILTIN su forumi koji postoje uvek. Moderator može da pravi nove direktno sa sajta
+// ("+ Novi forum"); oni se čuvaju u bazi (kolekcija "forums") i dodaju se ispod ovih.
+// Ako menjaš listu BUILTIN foruma ovde, ažuriraj i builtinForum() u firestore.rules.
 
-export const COMMUNITIES = [
+export const BUILTIN = [
   {
     id: "novosti",
     name: "Novosti",
@@ -75,13 +78,55 @@ export const COMMUNITIES = [
   },
 ];
 
+// Živa lista: BUILTIN + forumi iz baze. Menja se na licu mesta (isti niz), pa svi koji je uvezu vide izmene.
+export const COMMUNITIES = [...BUILTIN];
+
+export const FORUM_LIMITS = { name: 30, desc: 120 };
+export const FORUM_COLORS = ["#6D4AFF", "#FF4FA3", "#35E0FF", "#2EF2A0", "#FFB84D", "#FF8A5C", "#FFE14D", "#B26BFF"];
+export const FORUM_EMOJIS = ["🎨", "📚", "🐶", "🍕", "🚗", "✈️", "🏀", "📸", "🤖", "🎬", "🧠", "🔥"];
+const COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+
+export const isBuiltin = (id) => BUILTIN.some((c) => c.id === id);
+
+// Naziv -> adresa foruma: "Škola i život!" -> "skola-i-zivot"
+export function slugify(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/đ/g, "dj")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24)
+    .replace(/-+$/, "");
+}
+
+// Postavlja forume iz baze (ne dira ugrađene).
+export function setCustomForums(list) {
+  const custom = (list || [])
+    .filter((f) => f && f.id && !isBuiltin(f.id))
+    .map((f) => ({
+      id: String(f.id),
+      name: String(f.name || f.id),
+      desc: String(f.desc || ""),
+      emoji: String(f.emoji || "💬"),
+      color: COLOR_RE.test(f.color || "") ? f.color : "#8B7CFF",
+      adminOnly: f.adminOnly === true,
+      custom: true,
+      createdAt: f.createdAt || 0,
+    }))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  COMMUNITIES.length = 0;
+  COMMUNITIES.push(...BUILTIN, ...custom);
+}
+
 export const ALL_FORUMS = { id: "", name: "Sve objave", emoji: "✨", color: "#8B7CFF" };
 
 export function getCommunity(id) {
   return (
     COMMUNITIES.find((c) => c.id === id) || {
       id,
-      name: id || "Nepoznat forum",
+      name: id ? id.replace(/-/g, " ") : "Nepoznat forum",
       desc: "",
       emoji: "💬",
       color: "#8B7CFF",

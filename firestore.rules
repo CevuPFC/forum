@@ -9,6 +9,7 @@ rules_version = '2';
 //  - ocenu (score) je moguće promeniti samo zajedno sa sopstvenim glasom, pa svako ima najviše jedan glas
 //  - brisati mogu autor i administratori; administrator je onaj čiji UID postoji u kolekciji "admins"
 //  - samo administratori mogu da objavljuju na forumu "novosti" i da čitaju prijave
+//  - samo administratori mogu da prave i brišu nove forume (kolekcija "forums")
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -29,9 +30,20 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
 
-    // Lista foruma mora da se poklapa sa communities.js
-    function isValidCommunity(c) {
+    // Ugrađeni forumi: lista mora da se poklapa sa BUILTIN u communities.js
+    function builtinForum(c) {
       return c in ['novosti', 'opste', 'gaming', 'muzika', 'filmovi', 'sport', 'mimovi', 'saveti', 'tehnika', 'skola'];
+    }
+
+    // Forum je ugrađen ili ga je moderator napravio (dokument u "forums")
+    function isValidCommunity(c) {
+      return builtinForum(c) || exists(/databases/$(database)/documents/forums/$(c));
+    }
+
+    // Forumi na kojima objavljuju samo moderatori
+    function adminOnlyForum(c) {
+      return c == 'novosti'
+        || (!builtinForum(c) && get(/databases/$(database)/documents/forums/$(c)).data.adminOnly == true);
     }
 
     // Glas korisnika za stavku (objavu ili komentar), pre i posle ove izmene
@@ -50,6 +62,30 @@ service cloud.firestore {
     match /admins/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow write: if false;
+    }
+
+    // Forumi koje prave moderatori. ID dokumenta je adresa foruma (npr. "anime").
+    match /forums/{fid} {
+      allow read: if true;
+      allow create: if isAdmin()
+        && fid.matches('^[a-z0-9-]{2,24}$')
+        && !builtinForum(fid)
+        && request.resource.data.keys().hasOnly(['name', 'desc', 'emoji', 'color', 'adminOnly', 'createdBy', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.name.size() <= 30
+        && request.resource.data.desc is string
+        && request.resource.data.desc.size() <= 120
+        && request.resource.data.emoji is string
+        && request.resource.data.emoji.size() >= 1
+        && request.resource.data.emoji.size() <= 16
+        && request.resource.data.color is string
+        && request.resource.data.color.matches('^#[0-9A-Fa-f]{6}$')
+        && request.resource.data.adminOnly is bool
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     // Rezervacija korisničkog imena (jedinstveno, bez obzira na velika i mala slova)
@@ -101,7 +137,7 @@ service cloud.firestore {
         && request.resource.data.url.size() <= 500
         && (request.resource.data.url == '' || request.resource.data.url.matches('^https?://.+'))
         && isValidCommunity(request.resource.data.community)
-        && (request.resource.data.community != 'novosti' || isAdmin())
+        && (!adminOnlyForum(request.resource.data.community) || isAdmin())
         && request.resource.data.score == 0
         && request.resource.data.commentCount == 0
         && request.resource.data.createdAt == request.time;

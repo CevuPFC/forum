@@ -1,5 +1,5 @@
 import { firebaseConfig, settings } from "./firebase-config.js";
-import { COMMUNITIES, ALL_FORUMS, getCommunity } from "./communities.js";
+import { COMMUNITIES, ALL_FORUMS, FORUM_LIMITS, FORUM_COLORS, FORUM_EMOJIS, getCommunity, setCustomForums } from "./communities.js";
 import { createBackend, LIMITS } from "./db.js";
 
 /* ------------------------------------------------------------------ */
@@ -14,6 +14,7 @@ const state = {
   posts: [],
   postsLoaded: false,
   postsError: null,
+  forumsLoaded: false,
   myVotes: {},
   route: { name: "feed" },
   sort: "hot",
@@ -31,6 +32,7 @@ const state = {
 };
 
 let unsubPosts = null;
+let unsubForums = null;
 let unsubVotes = null;
 let unsubReports = null;
 let routeSubs = [];
@@ -127,7 +129,7 @@ function hue(name) {
 const avatar = (name, size = "") =>
   `<span class="avatar ${size}" style="background:hsl(${hue(name)} 90% 68%)" aria-hidden="true">${esc(String(name || "?").charAt(0).toUpperCase())}</span>`;
 const emo = (c, size = "") =>
-  `<span class="emo ${size}" style="--c:${esc(c.color)}" aria-hidden="true">${c.emoji}</span>`;
+  `<span class="emo ${size}" style="--c:${esc(c.color)}" aria-hidden="true">${esc(c.emoji)}</span>`;
 
 /* ------------------------------------------------------------------ */
 /* Tema                                                                */
@@ -211,6 +213,17 @@ function onRoute() {
 
 function syncPostsSub() {
   if (!backend) return;
+  if (readingAllowed() && !unsubForums) {
+    unsubForums = backend.subscribeForums(
+      (list) => { setCustomForums(list); state.forumsLoaded = true; renderData(); },
+      () => { state.forumsLoaded = true; renderData(); }
+    );
+  } else if (!readingAllowed() && unsubForums) {
+    unsubForums();
+    unsubForums = null;
+    setCustomForums([]);
+    state.forumsLoaded = false;
+  }
   if (readingAllowed() && !unsubPosts) {
     unsubPosts = backend.subscribePosts(
       (posts) => { state.posts = posts; state.postsLoaded = true; state.postsError = null; renderData(); },
@@ -319,6 +332,11 @@ function renderAuthBox() {
   }
 }
 
+const newForumButton = () =>
+  state.user && state.user.isAdmin
+    ? `<button class="btn wide new-forum-btn" type="button" data-action="new-forum">+ Novi forum</button>`
+    : "";
+
 function renderSidebar() {
   const r = state.route;
   const cur = (cond) => (cond ? ' aria-current="page"' : "");
@@ -331,7 +349,8 @@ function renderSidebar() {
       <li><a class="side-link" href="#/"${cur(r.name === "feed" && !r.community)}>${emo(ALL_FORUMS)}Sve objave</a></li>
       ${COMMUNITIES.map((c) => `<li><a class="side-link" href="#/f/${c.id}"${cur(r.name === "feed" && r.community === c.id)}>${emo(c)}${esc(c.name)}</a></li>`).join("")}
       ${reportsLink}
-    </ul>`;
+    </ul>
+    ${newForumButton()}`;
 }
 
 function renderAside() {
@@ -467,6 +486,7 @@ function sortBar() {
 function feedView() {
   const r = state.route;
   if (r.community && !COMMUNITIES.some((c) => c.id === r.community)) {
+    if (!state.forumsLoaded) return loadingView();
     return `<div class="panel empty"><h2>Ovaj forum ne postoji</h2><p>Izaberi neki od foruma.</p><a class="btn" href="#/">Sve objave</a></div>`;
   }
   const c = r.community ? getCommunity(r.community) : null;
@@ -479,6 +499,8 @@ function feedView() {
   const head = `<section class="feed-head">
     <div class="feed-title">${emo(c || ALL_FORUMS, "lg")}<h1>${c ? esc(c.name) : "Sve objave"}</h1></div>
     ${c ? `<p class="feed-desc">${esc(c.desc)}</p>` : ""}
+    ${c && c.custom && state.user && state.user.isAdmin
+      ? `<button class="btn btn-small" type="button" data-action="delete-forum" data-id="${esc(c.id)}">Obriši forum</button>` : ""}
   </section>`;
 
   let body;
@@ -695,7 +717,8 @@ function forumsDialog() {
       <li><a class="side-link" href="#/"${cur(r.name === "feed" && !r.community)}>${emo(ALL_FORUMS)}Sve objave</a></li>
       ${COMMUNITIES.map((c) => `<li><a class="side-link" href="#/f/${c.id}"${cur(r.name === "feed" && r.community === c.id)}>${emo(c)}${esc(c.name)}</a></li>`).join("")}
       ${state.user && state.user.isAdmin ? `<li><a class="side-link" href="#/prijave">${emo({ emoji: "🚩", color: "#FF4FA3" })}Prijave</a></li>` : ""}
-    </ul>`);
+    </ul>
+    ${newForumButton()}`);
 }
 
 function authDialog(mode = "login", note = "") {
@@ -719,6 +742,33 @@ function authDialog(mode = "login", note = "") {
       <button class="btn btn-primary wide" type="submit">${reg ? "Napravi nalog" : "Prijavi se"}</button>
     </form>
     ${demoHint}`);
+}
+
+function forumDialog() {
+  const sw = FORUM_COLORS.map((c, i) =>
+    `<label class="swatch" style="--c:${c}"><input type="radio" name="color" value="${c}" ${i === 0 ? "checked" : ""}><span></span></label>`).join("");
+  const em = FORUM_EMOJIS.map((e) => `<button class="emoji-pick" type="button" data-action="pick-emoji" data-value="${e}">${e}</button>`).join("");
+  openDialog(`<h2>Novi forum</h2>
+    <p>Forum se odmah pojavljuje u listi svima. Možeš da ga obrišeš kad god hoćeš.</p>
+    <form data-form="forum" novalidate>
+      <label class="field"><span>Naziv</span>
+        <input name="name" type="text" maxlength="${FORUM_LIMITS.name}" placeholder="npr. Anime" required>
+      </label>
+      <label class="field"><span>Opis (nije obavezan)</span>
+        <input name="desc" type="text" maxlength="${FORUM_LIMITS.desc}" placeholder="O čemu se ovde priča?">
+      </label>
+      <div class="field"><span>Ikonica</span>
+        <input id="forum-emoji" name="emoji" type="text" maxlength="8" value="💬" class="emoji-input" aria-label="Emoji">
+        <div class="emoji-row">${em}</div>
+      </div>
+      <div class="field"><span>Boja</span><div class="swatches">${sw}</div></div>
+      <label class="check"><input name="adminOnly" type="checkbox"> Objavljuju samo moderatori (kao Novosti)</label>
+      <div class="form-error" role="alert"></div>
+      <div class="row">
+        <button class="btn" type="button" data-action="close-dialog">Otkaži</button>
+        <button class="btn btn-primary" type="submit">Napravi forum</button>
+      </div>
+    </form>`);
 }
 
 function confirmDialog({ title, text, action, data }) {
@@ -789,6 +839,20 @@ async function runAction(el) {
   switch (a) {
     case "auth": return authDialog(v);
     case "forums": return forumsDialog();
+    case "new-forum":
+      if (!state.user || !state.user.isAdmin) return;
+      return forumDialog();
+    case "pick-emoji": { const i = document.getElementById("forum-emoji"); if (i) i.value = v; return; }
+    case "delete-forum":
+      return confirmDialog({ title: "Obrisati forum?", text: "Forum nestaje iz liste. Objave iz njega ostaju i vide se u „Sve objave“. Ovo ne može da se vrati.", action: "do-delete-forum", data: { id } });
+    case "do-delete-forum":
+      try {
+        await backend.deleteForum(id);
+        closeDialog();
+        toast("Forum obrisan");
+        if (state.route.name === "feed" && state.route.community === id) location.hash = "#/";
+      } catch (e) { closeDialog(); toast(e.message); }
+      return;
     case "close-dialog": return closeDialog();
     case "logout":
       await backend.logout();
@@ -872,6 +936,19 @@ async function submitForm(form) {
         closeDialog();
         toast("Nalog je napravljen");
         break;
+      case "forum": {
+        const id = await backend.createForum({
+          name: String(fd.get("name")),
+          desc: String(fd.get("desc")),
+          emoji: String(fd.get("emoji")),
+          color: String(fd.get("color")),
+          adminOnly: fd.get("adminOnly") === "on",
+        });
+        closeDialog();
+        toast("Forum je napravljen");
+        location.hash = `#/f/${enc(id)}`;
+        break;
+      }
       case "newpost": {
         const id = await backend.createPost({
           title: String(fd.get("title")),

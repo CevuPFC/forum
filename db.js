@@ -13,8 +13,10 @@
 //  deletePost(id), createComment({postId,parentId,body}), deleteComment(id)
 //  vote(kind, id, value)              kind: "posts" | "comments", value: -1 | 0 | 1
 //  report({targetType,targetId,postId,reason,snippet}), dismissReport(id)
+//  subscribeForums(cb, errCb)         forumi koje su napravili moderatori
+//  createForum({name,desc,emoji,color,adminOnly}) -> id, deleteForum(id)   (samo admin)
 
-import { COMMUNITIES } from "./communities.js";
+import { COMMUNITIES, FORUM_LIMITS, isBuiltin, slugify } from "./communities.js";
 import { buildSeed } from "./seed.js";
 
 const FIREBASE_VERSION = "10.12.2";
@@ -83,6 +85,22 @@ function validatePost({ title, body, url, community }, isAdmin) {
   return { title: t, body: (body || "").trim(), url: u, community };
 }
 
+function validateForum({ name, desc, emoji, color, adminOnly }, isAdmin) {
+  if (!isAdmin) throw fail("Forume mogu da prave samo moderatori.");
+  const n = (name || "").trim().replace(/\s+/g, " ");
+  if (n.length < 2) throw fail("Naziv mora imati bar 2 znaka.");
+  if (n.length > FORUM_LIMITS.name) throw fail(`Naziv može imati najviše ${FORUM_LIMITS.name} znakova.`);
+  const id = slugify(n);
+  if (id.length < 2) throw fail("Naziv mora sadržati bar dva slova ili broja.");
+  if (isBuiltin(id) || COMMUNITIES.some((c) => c.id === id)) throw fail("Forum sa tim imenom već postoji.");
+  const d = (desc || "").trim();
+  if (d.length > FORUM_LIMITS.desc) throw fail(`Opis može imati najviše ${FORUM_LIMITS.desc} znakova.`);
+  const e = (emoji || "").trim() || "💬";
+  if (e.length > 8) throw fail("Za ikonu upiši samo jedan emoji.");
+  const col = /^#[0-9A-Fa-f]{6}$/.test(color || "") ? color : "#6D4AFF";
+  return { id, name: n, desc: d, emoji: e, color: col, adminOnly: Boolean(adminOnly) };
+}
+
 function validateComment(body) {
   const b = (body || "").trim();
   if (!b) throw fail("Komentar ne može da bude prazan.");
@@ -111,7 +129,7 @@ async function createFirebaseBackend(config) {
   const auth = authMod.getAuth(app);
   const db = fs.getFirestore(app);
   const {
-    doc, collection, getDoc, addDoc, deleteDoc, updateDoc, query, orderBy, limit, where,
+    doc, collection, getDoc, addDoc, setDoc, deleteDoc, updateDoc, query, orderBy, limit, where,
     onSnapshot, writeBatch, runTransaction, serverTimestamp, increment,
   } = fs;
 
@@ -256,6 +274,40 @@ async function createFirebaseBackend(config) {
     subscribeReports(cb, errCb) {
       const q = query(collection(db, "reports"), orderBy("createdAt", "desc"), limit(100));
       return watch(q, (s) => s.docs.map(mapDoc), cb, errCb);
+    },
+
+    subscribeForums(cb, errCb) {
+      return watch(collection(db, "forums"), (s) => s.docs.map(mapDoc), cb, errCb);
+    },
+
+    async createForum(input) {
+      const me = need();
+      const f = validateForum(input, me.isAdmin);
+      try {
+        await setDoc(doc(db, "forums", f.id), {
+          name: f.name,
+          desc: f.desc,
+          emoji: f.emoji,
+          color: f.color,
+          adminOnly: f.adminOnly,
+          createdBy: me.uid,
+          createdAt: serverTimestamp(),
+        });
+        return f.id;
+      } catch (e) {
+        if (e && e.code === "permission-denied")
+          throw fail("Forum nije napravljen. Proveri da li je ime novo i da li su najnovija pravila objavljena u Firebase konzoli.");
+        throw friendlyError(e);
+      }
+    },
+
+    async deleteForum(id) {
+      need();
+      try {
+        await deleteDoc(doc(db, "forums", id));
+      } catch (e) {
+        throw friendlyError(e);
+      }
     },
 
     async createPost(input) {
@@ -465,6 +517,25 @@ function createDemoBackend() {
     },
     subscribeReports(cb) {
       return sub(() => [...data.reports].sort((a, b) => b.createdAt - a.createdAt), cb);
+    },
+    subscribeForums(cb) {
+      return sub(() => data.forums || [], cb);
+    },
+
+    async createForum(input) {
+      const m = need();
+      const f = validateForum(input, m.isAdmin);
+      data.forums = data.forums || [];
+      data.forums.push({ ...f, createdBy: m.uid, createdAt: Date.now() });
+      save();
+      return f.id;
+    },
+
+    async deleteForum(id) {
+      const m = need();
+      if (!m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
+      data.forums = (data.forums || []).filter((f) => f.id !== id);
+      save();
     },
 
     async createPost(input) {

@@ -6,7 +6,7 @@ Sajt je običan HTML/CSS/JS bez build koraka, pa može direktno na GitHub Pages.
 
 ## Šta Glas ima
 
-- 10 foruma: Novosti (samo administratori), Opšte, Gaming, Muzika, Filmovi i serije, Sport, Mimovi, Pitanja i saveti, Tehnika i kod, Škola. Lista je u `communities.js`.
+- 10 foruma: Novosti (samo administratori), Opšte, Gaming, Muzika, Filmovi i serije, Sport, Mimovi, Pitanja i saveti, Tehnika i kod, Škola. Lista ugrađenih je u `communities.js`. Moderator može da pravi nove forume direktno sa sajta (levo, dugme „+ Novi forum“: naziv, opis, ikonica, boja, opcija „samo moderatori objavljuju“) i da ih briše. Novi forumi se čuvaju u kolekciji `forums`.
 - Objave sa naslovom, tekstom i opcionim linkom. Link do slike (.jpg, .png, .gif, .webp) prikazuje se direktno u objavi.
 - Komentari u nitima (odgovor na odgovor), sakrivanje niti
 - Glasanje za objave i komentare, po jedan glas po članu
@@ -31,7 +31,7 @@ Moduli ne rade sa `file://`, pa fajl ne otvaraj dvoklikom. Pokreni ga preko Live
 1. U [Firebase konzoli](https://console.firebase.google.com) otvori svoj projekat.
 2. **Authentication > Sign-in method**: uključi **Email/Password**.
 3. **Firestore Database**: napravi bazu (Create database), izaberi lokaciju blizu (npr. `eur3`).
-4. **Firestore Database > Rules**: obriši postojeći sadržaj, nalepi ceo `firestore.rules` i klikni **Publish**. Kad god promeniš forume u `communities.js`, ažuriraj i listu u pravilima i ponovo klikni Publish.
+4. **Firestore Database > Rules**: obriši postojeći sadržaj, nalepi ceo `firestore.rules` i klikni **Publish**. Pravila moraš ponovo da objaviš kad god se promene (npr. posle ovog ažuriranja, zbog novih foruma). Ako menjaš ugrađene forume u `communities.js`, ažuriraj i `builtinForum()` u pravilima.
 5. **Project settings > Your apps > Web app**: kopiraj `firebaseConfig` i nalepi vrednosti u `firebase-config.js`.
 6. Osveži stranicu. Žuta traka „Demo režim“ nestaje.
 
