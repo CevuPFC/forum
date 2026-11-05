@@ -87,6 +87,17 @@ function domainOf(url) {
 const uploadsEnabled = Boolean(uploads && uploads.cloudName && uploads.uploadPreset);
 const MEDIA_LIMITS = { image: 10 * 1024 * 1024, video: 100 * 1024 * 1024 }; // ograničenja besplatnog Cloudinary naloga
 
+function isAudioUrl(url) {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) && /\.(mp3|m4a|wav|ogg|oga|aac|flac|opus)$/i.test(u.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
+const AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|aac|flac|opus)$/i;
+
 function isVideoUrl(url) {
   try {
     const u = new URL(url);
@@ -536,7 +547,9 @@ function postMedia(p) {
     ? `<img class="post-img" src="${esc(p.url)}" alt="Slika uz objavu" loading="lazy" referrerpolicy="no-referrer">`
     : isVideoUrl(p.url)
       ? `<video class="post-video" src="${esc(p.url)}" controls preload="metadata" playsinline></video>`
-      : "";
+      : isAudioUrl(p.url)
+        ? `<audio class="post-audio" src="${esc(p.url)}" controls preload="none"></audio>`
+        : "";
   return `${own}${img}<a class="link-out" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer nofollow">${icon.link}${esc(img ? domainOf(p.url) : p.url.length > 60 ? domainOf(p.url) : p.url)}</a>`;
 }
 
@@ -731,7 +744,7 @@ function buildCommentTree() {
 
 /* ---------- Otpremanje na Cloudinary (kad je podešen u uploads-config.js) ---------- */
 
-const PICK_HINT = () => (uploadsEnabled ? "Slika do 10 MB ili video do 100 MB." : "Slika se automatski smanji.");
+const PICK_HINT = () => (uploadsEnabled ? "Slika do 10 MB, video ili audio do 100 MB." : "Slika se automatski smanji.");
 
 function downscaleImage(file) {
   // Fotografije se smanje na najviše 1600 px pre slanja: brže je i staje u ograničenje.
@@ -773,9 +786,14 @@ function sendToCloudinary(file, onProgress) {
   });
 }
 
-function mediaUrlFrom(res) {
+function mediaUrlFrom(res, audio = false) {
   const base = `https://res.cloudinary.com/${encodeURIComponent(uploads.cloudName)}`;
   const v = res.version ? `v${res.version}/` : "";
+  if (audio) {
+    // Cloudinary audio vodi kao "video"; formati koje pregledač ne svira se pretvaraju u mp3.
+    const ok = /^(mp3|m4a|wav|ogg|aac|opus)$/i.test(res.format || "");
+    return `${base}/video/upload/${v}${res.public_id}.${ok ? res.format : "mp3"}`;
+  }
   if (res.resource_type === "video") {
     const ok = /^(mp4|webm|ogv)$/i.test(res.format || "");
     return `${base}/video/upload/${v}${res.public_id}.${ok ? res.format : "mp4"}`;
@@ -786,10 +804,11 @@ function mediaUrlFrom(res) {
 async function uploadMedia(file) {
   const say = (t, err = false) => { const s = document.getElementById("np-upload-status"); if (s) { s.textContent = t; s.classList.toggle("err", err); } };
   if (state.uploading) return;
-  const isVideo = /^video\//.test(file.type);
-  const isImage = /^image\//.test(file.type);
-  if (!isVideo && !isImage) return say("Izaberi sliku ili video.", true);
-  if (isVideo && file.size > MEDIA_LIMITS.video) return say("Video je veći od 100 MB. Izaberi manji.", true);
+  const isAudio = /^audio\//.test(file.type) || (!file.type && AUDIO_EXT.test(file.name));
+  const isVideo = !isAudio && /^video\//.test(file.type);
+  const isImage = !isAudio && /^image\//.test(file.type);
+  if (!isVideo && !isImage && !isAudio) return say("Izaberi sliku, video ili audio fajl.", true);
+  if ((isVideo || isAudio) && file.size > MEDIA_LIMITS.video) return say("Fajl je veći od 100 MB. Izaberi manji.", true);
   state.uploading = true;
   const btn = document.querySelector('form[data-form="newpost"] button[type="submit"]');
   if (btn) btn.disabled = true;
@@ -798,7 +817,7 @@ async function uploadMedia(file) {
     const toSend = isImage ? await downscaleImage(file) : file;
     if (isImage && toSend.size > MEDIA_LIMITS.image) throw new Error("Slika je veća od 10 MB. Izaberi manju.");
     const res = await sendToCloudinary(toSend, (p) => say(`Otpremanje ${p}%`));
-    const url = mediaUrlFrom(res);
+    const url = mediaUrlFrom(res, isAudio);
     if (url.length > LIMITS.url) throw new Error("Adresa fajla je predugačka. Probaj drugi fajl.");
     state.draft.url = url;
     state.draft.image = "";
@@ -912,6 +931,7 @@ function draftPreview() {
   if (d.image) el = `<img class="upload-preview" src="${esc(d.image)}" alt="Pregled slike">`;
   else if (isImageUrl(d.url)) el = `<img class="upload-preview" src="${esc(d.url)}" alt="Pregled slike" referrerpolicy="no-referrer">`;
   else if (isVideoUrl(d.url)) el = `<video class="upload-preview" src="${esc(d.url)}" controls preload="metadata" playsinline></video>`;
+  else if (isAudioUrl(d.url)) el = `<audio class="post-audio" src="${esc(d.url)}" controls preload="none"></audio>`;
   return el ? `${el}<button class="btn btn-small" type="button" data-action="clear-media">Ukloni</button>` : "";
 }
 
@@ -937,17 +957,17 @@ function newPostView() {
       <textarea id="np-body" name="body" rows="8" maxlength="${LIMITS.body}" data-draft="body" placeholder="Ovde možeš detaljnije">${esc(d.body)}</textarea>
     </label>
     <div class="field">
-      <span>${uploadsEnabled ? "Slika ili video (nije obavezno)" : "Slika (nije obavezno)"}</span>
+      <span>${uploadsEnabled ? "Slika, video ili audio (nije obavezno)" : "Slika (nije obavezno)"}</span>
       <div class="upload-row">
-        <label class="btn" for="np-file" tabindex="0">${uploadsEnabled ? "Dodaj sliku ili video" : "Dodaj sliku"}</label>
-        <input id="np-file" type="file" accept="${uploadsEnabled ? "image/*,video/*" : "image/*"}" hidden>
+        <label class="btn" for="np-file" tabindex="0">${uploadsEnabled ? "Dodaj fajl" : "Dodaj sliku"}</label>
+        <input id="np-file" type="file" accept="${uploadsEnabled ? "image/*,video/*,audio/*" : "image/*"}" hidden>
         <span class="upload-status" id="np-upload-status" aria-live="polite">${state.uploading ? "Otpremanje u toku…" : PICK_HINT()}</span>
       </div>
       <div id="np-preview">${draftPreview()}</div>
     </div>
     <label class="field"><span>Link (nije obavezno)</span>
       <input id="np-url" name="url" type="url" maxlength="${LIMITS.url}" data-draft="url" value="${esc(d.url)}" placeholder="https://">
-      <small>YouTube link se prikazuje kao video. Link do slike (.jpg, .png, .gif, .webp) prikazuje se direktno u objavi. Ne objavljuj lične podatke, svoje ni tuđe.</small>
+      <small>YouTube link se prikazuje kao video. Link do slike (.jpg, .png, .gif, .webp) ili audio fajla (.mp3) prikazuje se direktno u objavi. Ne objavljuj lične podatke, svoje ni tuđe.</small>
     </label>
     <div class="form-error" role="alert"></div>
     <div class="form-actions">
@@ -1205,7 +1225,7 @@ async function runAction(el) {
     case "forums": return forumsDialog();
     case "clear-media": {
       state.draft.image = "";
-      if (isImageUrl(state.draft.url) || isVideoUrl(state.draft.url)) {
+      if (isImageUrl(state.draft.url) || isVideoUrl(state.draft.url) || isAudioUrl(state.draft.url)) {
         state.draft.url = "";
         const input = document.getElementById("np-url");
         if (input) input.value = "";

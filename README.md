@@ -52,7 +52,7 @@ Preporučeno: **Cloudinary** (besplatan nalog, bez kartice; slike do 10 MB, vide
 2. U **Dashboard** (ili Settings > API Keys) nađi **Cloud name**.
 3. **Settings > Upload > Upload presets > Add upload preset**: ime npr. `glas_unsigned`, **Signing mode = Unsigned**. U **Allowed formats** možeš da upišeš `jpg,png,gif,webp,heic,mp4,mov,webm`. Sačuvaj.
 4. U `uploads-config.js` upiši `cloudName` i `uploadPreset` i okači fajl na GitHub.
-5. Na formi „Šta ima novo?“ dugme postaje „Dodaj sliku ili video“. Slika se pre slanja smanji na najviše 1600 px.
+5. Na formi „Šta ima novo?“ dugme postaje „Dodaj fajl“ (slika, video ili audio, npr. mp3, m4a, wav; audio ima plejer u objavi). Slika se pre slanja smanji na najviše 1600 px.
 
 Besplatan nalog ima mesečno ograničenje (oko 25 GB prostora i prenosa). Fajlove koje korisnici otpreme brišeš u Cloudinary konzoli (**Media Library**); brisanje objave na Glasu ne briše fajl tamo.
 
