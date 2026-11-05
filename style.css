@@ -510,3 +510,10 @@ label.btn { cursor: pointer; }
 .notif-list a:hover { border-color: var(--primary); text-decoration: none; }
 .notif-list a.unread { color: var(--ink); border-color: var(--primary); box-shadow: inset 3px 0 0 var(--primary); }
 .notif-time { font-size: 0.78rem; color: var(--ink-3); }
+.notif-list li { position: relative; }
+.notif-list a { padding-right: 40px; }
+.notif-del {
+  position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%;
+  background: transparent; border: 0; color: var(--ink-3); font-size: 1.2rem; line-height: 1;
+}
+.notif-del:hover { background: var(--surface); color: var(--danger); }

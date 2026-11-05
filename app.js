@@ -1004,10 +1004,12 @@ function notifsDialog() {
     ${list.length
       ? `<ul class="notif-list">${list.map((n) => `<li><a href="#/p/${esc(n.postId)}" data-notif="${esc(n.id)}" class="${n.read ? "" : "unread"}">
           <span class="notif-text"><b>${esc(n.fromName)}</b> ${n.type === "reply" ? "je odgovorio na tvoj komentar u" : "je komentarisao tvoju objavu"} „${esc(n.postTitle)}“</span>
-          <span class="notif-time">${ago(n.createdAt)}</span></a></li>`).join("")}</ul>`
+          <span class="notif-time">${ago(n.createdAt)}</span></a>
+          <button class="notif-del" type="button" data-action="notif-delete" data-id="${esc(n.id)}" aria-label="Obriši notifikaciju">×</button></li>`).join("")}</ul>`
       : `<p>Za sada nema ništa novo. Ovde se pojavljuje kad neko komentariše tvoju objavu ili odgovori na tvoj komentar.</p>`}
     <div class="row">
       ${unreadCount() ? `<button class="btn" type="button" data-action="notifs-read-all">Označi sve kao pročitano</button>` : ""}
+      ${list.length ? `<button class="btn" type="button" data-action="notifs-clear">Obriši sve</button>` : ""}
       <button class="btn btn-primary" type="button" data-action="close-dialog">Zatvori</button>
     </div>`);
   $("#dlg").dataset.kind = "notifs";
@@ -1219,6 +1221,12 @@ async function runAction(el) {
       return forumDialog();
     case "pick-emoji": { const i = document.getElementById("forum-emoji"); if (i) i.value = v; return; }
     case "notifs": return notifsDialog();
+    case "notif-delete":
+      try { await backend.deleteNotifications([id]); } catch (e) { toast(e.message); }
+      return;
+    case "notifs-clear":
+      try { await backend.clearNotifications(); toast("Notifikacije obrisane"); } catch (e) { toast(e.message); }
+      return;
     case "notifs-read-all":
       backend.markNotificationsRead(state.notifs.filter((n) => !n.read).map((n) => n.id));
       return;

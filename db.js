@@ -18,7 +18,7 @@
 //  createForum({name,desc,emoji,color,adminOnly}) -> id    (svaki prijavljen korisnik; adminOnly samo admin)
 //  updateForum(id, {name,desc,emoji,color,adminOnly})   (autor foruma ili admin; ugrađene forume samo admin)
 //  deleteForum(id)                    (autor foruma ili admin; ugrađeni se ne brišu)
-//  subscribeNotifications(uid, cb), markNotificationsRead(ids)
+//  subscribeNotifications(uid, cb), markNotificationsRead(ids), deleteNotifications(ids), clearNotifications()
 //  createComment({postId,parentId,body,postTitle,notify:[{uid,type}]})   type: "comment" | "reply"
 //  loadPhotos(imena) -> {ime: dataUrl|""}, setPhoto(dataUrl), removePhoto(ime)   (profilne slike)
 
@@ -176,7 +176,7 @@ async function createFirebaseBackend(config) {
   const auth = authMod.getAuth(app);
   const db = fs.getFirestore(app);
   const {
-    doc, collection, getDoc, addDoc, setDoc, deleteDoc, updateDoc, query, orderBy, limit, where,
+    doc, collection, getDoc, getDocs, addDoc, setDoc, deleteDoc, updateDoc, query, orderBy, limit, where,
     onSnapshot, writeBatch, runTransaction, serverTimestamp, increment,
   } = fs;
 
@@ -385,6 +385,32 @@ async function createFirebaseBackend(config) {
         await batch.commit();
       } catch (e) {
         console.error(e);
+      }
+    },
+
+    async deleteNotifications(ids) {
+      const me = need();
+      if (!ids.length) return;
+      try {
+        const batch = writeBatch(db);
+        ids.slice(0, 400).forEach((id) => batch.delete(doc(db, "users", me.uid, "notifications", id)));
+        await batch.commit();
+      } catch (e) {
+        throw friendlyError(e);
+      }
+    },
+
+    async clearNotifications() {
+      const me = need();
+      try {
+        const snap = await getDocs(collection(db, "users", me.uid, "notifications"));
+        for (let i = 0; i < snap.docs.length; i += 400) {
+          const batch = writeBatch(db);
+          snap.docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+        }
+      } catch (e) {
+        throw friendlyError(e);
       }
     },
 
@@ -724,6 +750,20 @@ function createDemoBackend() {
     async markNotificationsRead(ids) {
       const m = need();
       ((data.notifications || {})[m.uid] || []).forEach((n) => { if (ids.includes(n.id)) n.read = true; });
+      save();
+    },
+
+    async deleteNotifications(ids) {
+      const m = need();
+      data.notifications = data.notifications || {};
+      data.notifications[m.uid] = (data.notifications[m.uid] || []).filter((n) => !ids.includes(n.id));
+      save();
+    },
+
+    async clearNotifications() {
+      const m = need();
+      data.notifications = data.notifications || {};
+      data.notifications[m.uid] = [];
       save();
     },
 
