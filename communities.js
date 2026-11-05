@@ -101,8 +101,20 @@ export function slugify(name) {
     .replace(/-+$/, "");
 }
 
-// Postavlja forume iz baze (ne dira ugrađene).
+// Postavlja forume iz baze. Dokument sa adresom ugrađenog foruma je izmena njegovog izgleda
+// (naziv, opis, ikonica, boja), a ostali su forumi koje su napravili korisnici.
 export function setCustomForums(list) {
+  const clean = (f) => ({
+    name: String(f.name || ""),
+    desc: String(f.desc || ""),
+    emoji: String(f.emoji || ""),
+    color: COLOR_RE.test(f.color || "") ? f.color : "",
+  });
+  const overrides = new Map((list || []).filter((f) => f && isBuiltin(f.id)).map((f) => [f.id, clean(f)]));
+  const base = BUILTIN.map((b) => {
+    const o = overrides.get(b.id);
+    return o ? { ...b, name: o.name || b.name, desc: o.desc !== "" ? o.desc : b.desc, emoji: o.emoji || b.emoji, color: o.color || b.color } : b;
+  });
   const custom = (list || [])
     .filter((f) => f && f.id && !isBuiltin(f.id))
     .map((f) => ({
@@ -118,7 +130,7 @@ export function setCustomForums(list) {
     }))
     .sort((a, b) => a.createdAt - b.createdAt);
   COMMUNITIES.length = 0;
-  COMMUNITIES.push(...BUILTIN, ...custom);
+  COMMUNITIES.push(...base, ...custom);
 }
 
 export const ALL_FORUMS = { id: "", name: "Sve objave", emoji: "✨", color: "#8B7CFF" };

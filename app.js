@@ -31,12 +31,15 @@ const state = {
   draft: { community: "", title: "", body: "", url: "", image: "" },
   busy: new Set(),
   uploading: false,
+  notifs: [],
 };
 
 let unsubPosts = null;
 let unsubForums = null;
 let unsubVotes = null;
 let unsubReports = null;
+let unsubNotifs = null;
+let notifSeen = null; // ID-evi notifikacija koje su već stigle (da se za nove pokaže poruka)
 let routeSubs = [];
 
 /* ------------------------------------------------------------------ */
@@ -265,7 +268,21 @@ function syncUserSubs() {
   if (unsubReports) { unsubReports(); unsubReports = null; }
   state.myVotes = {};
   state.reports = [];
+  if (unsubNotifs) { unsubNotifs(); unsubNotifs = null; }
+  state.notifs = [];
+  notifSeen = null;
   if (state.user) {
+    unsubNotifs = backend.subscribeNotifications(state.user.uid, (list) => {
+      if (notifSeen) {
+        const fresh = list.filter((n) => !n.read && !notifSeen.has(n.id));
+        if (fresh.length) toast(fresh.length === 1 ? notifPlain(fresh[0]) : `${fresh.length} nove notifikacije`);
+      }
+      notifSeen = new Set(list.map((n) => n.id));
+      state.notifs = list;
+      renderAuthBox();
+      updateTitle();
+      if ($("#dlg").open && $("#dlg").dataset.kind === "notifs") notifsDialog();
+    });
     unsubVotes = backend.subscribeMyVotes(state.user.uid, (map) => { state.myVotes = map; renderData(); });
     if (state.user.isAdmin) {
       unsubReports = backend.subscribeReports((r) => { state.reports = r; renderData(); }, () => {});
@@ -356,17 +373,27 @@ function updateTitle() {
   else if (r.name === "new") t = "Nova objava | Glas";
   else if (r.name === "user") t = `${r.username} | Glas`;
   else if (r.name === "reports") t = "Prijave | Glas";
-  document.title = t;
+  const u = unreadCount();
+  document.title = u ? `(${u}) ${t}` : t;
 }
 
 const newPostHref = () => `#/novo${state.route.name === "feed" && state.route.community ? "/" + enc(state.route.community) : ""}`;
+
+const unreadCount = () => state.notifs.filter((n) => !n.read).length;
+
+const notifPlain = (n) =>
+  n.type === "reply" ? `${n.fromName} je odgovorio na tvoj komentar` : `${n.fromName} je komentarisao tvoju objavu`;
+
+const bellIcon = svg('<path d="M6 9a6 6 0 0112 0c0 5 2 6 2 7H4c0-1 2-2 2-7M10 20a2 2 0 004 0"/>', 20);
 
 function renderAuthBox() {
   const box = $("#authbox");
   if (!state.authReady) { box.innerHTML = ""; return; }
   const newBtn = `<a class="btn btn-primary hide-sm" href="${newPostHref()}">Nova objava</a>`;
   if (state.user) {
+    const unread = unreadCount();
     box.innerHTML = `${newBtn}
+      <button class="icon-btn bell" type="button" data-action="notifs" aria-label="Notifikacije${unread ? `, ${unread} nepročitanih` : ""}">${bellIcon}${unread ? `<span class="bell-badge">${unread > 9 ? "9+" : unread}</span>` : ""}</button>
       <a class="user-link" href="#/u/${enc(state.user.username)}">${avatar(state.user.username, "sm")}${esc(state.user.username)}</a>
       <button class="btn hide-sm" type="button" data-action="logout">Odjavi se</button>`;
   } else {
@@ -380,6 +407,10 @@ const newForumButton = () =>
 
 const canDeleteForum = (c) =>
   Boolean(c && c.custom && state.user && (state.user.isAdmin || c.createdBy === state.user.uid));
+
+// Svoj forum menja autor, a sve forume (i ugrađene) moderator.
+const canEditForum = (c) =>
+  Boolean(c && state.user && (state.user.isAdmin || (c.custom && c.createdBy === state.user.uid)));
 
 function renderSidebar() {
   const r = state.route;
@@ -553,8 +584,10 @@ function feedView() {
   const head = `<section class="feed-head">
     <div class="feed-title">${emo(c || ALL_FORUMS, "lg")}<h1>${c ? esc(c.name) : "Sve objave"}</h1></div>
     ${c ? `<p class="feed-desc">${esc(c.desc)}</p>` : ""}
-    ${canDeleteForum(c)
-      ? `<button class="btn btn-small" type="button" data-action="delete-forum" data-id="${esc(c.id)}">Obriši forum</button>` : ""}
+    ${canEditForum(c) || canDeleteForum(c) ? `<div class="forum-tools">
+      ${canEditForum(c) ? `<button class="btn btn-small" type="button" data-action="edit-forum" data-id="${esc(c.id)}">Uredi forum</button>` : ""}
+      ${canDeleteForum(c) ? `<button class="btn btn-small" type="button" data-action="delete-forum" data-id="${esc(c.id)}">Obriši forum</button>` : ""}
+    </div>` : ""}
   </section>`;
 
   let body;
@@ -954,6 +987,7 @@ function reportsView() {
 
 function openDialog(html) {
   const d = $("#dlg");
+  delete d.dataset.kind;
   d.innerHTML = `<div class="dlg">${html}</div>`;
   if (!d.open) d.showModal();
   const first = d.querySelector("input, textarea, select");
@@ -962,6 +996,21 @@ function openDialog(html) {
 function closeDialog() {
   const d = $("#dlg");
   if (d.open) d.close();
+}
+
+function notifsDialog() {
+  const list = state.notifs;
+  openDialog(`<h2>Notifikacije</h2>
+    ${list.length
+      ? `<ul class="notif-list">${list.map((n) => `<li><a href="#/p/${esc(n.postId)}" data-notif="${esc(n.id)}" class="${n.read ? "" : "unread"}">
+          <span class="notif-text"><b>${esc(n.fromName)}</b> ${n.type === "reply" ? "je odgovorio na tvoj komentar u" : "je komentarisao tvoju objavu"} „${esc(n.postTitle)}“</span>
+          <span class="notif-time">${ago(n.createdAt)}</span></a></li>`).join("")}</ul>`
+      : `<p>Za sada nema ništa novo. Ovde se pojavljuje kad neko komentariše tvoju objavu ili odgovori na tvoj komentar.</p>`}
+    <div class="row">
+      ${unreadCount() ? `<button class="btn" type="button" data-action="notifs-read-all">Označi sve kao pročitano</button>` : ""}
+      <button class="btn btn-primary" type="button" data-action="close-dialog">Zatvori</button>
+    </div>`);
+  $("#dlg").dataset.kind = "notifs";
 }
 
 function forumsDialog() {
@@ -999,29 +1048,32 @@ function authDialog(mode = "login", note = "") {
     ${demoHint}`);
 }
 
-function forumDialog() {
-  const sw = FORUM_COLORS.map((c, i) =>
-    `<label class="swatch" style="--c:${c}"><input type="radio" name="color" value="${c}" ${i === 0 ? "checked" : ""}><span></span></label>`).join("");
+function forumDialog(edit = null) {
+  const colors = edit && !FORUM_COLORS.includes(edit.color) ? [edit.color, ...FORUM_COLORS] : FORUM_COLORS;
+  const pick = edit ? edit.color : FORUM_COLORS[0];
+  const sw = colors.map((c) =>
+    `<label class="swatch" style="--c:${esc(c)}"><input type="radio" name="color" value="${esc(c)}" ${c === pick ? "checked" : ""}><span></span></label>`).join("");
   const em = FORUM_EMOJIS.map((e) => `<button class="emoji-pick" type="button" data-action="pick-emoji" data-value="${e}">${e}</button>`).join("");
-  openDialog(`<h2>Novi forum</h2>
-    <p>Forum se odmah pojavljuje u listi svima. Možeš da ga obrišeš kad god hoćeš.</p>
+  openDialog(`<h2>${edit ? "Uredi forum" : "Novi forum"}</h2>
+    <p>${edit ? "Adresa foruma ostaje ista, a objave se ne diraju." : "Forum se odmah pojavljuje u listi svima. Možeš da ga obrišeš kad god hoćeš."}</p>
     <form data-form="forum" novalidate>
+      ${edit ? `<input type="hidden" name="id" value="${esc(edit.id)}">` : ""}
       <label class="field"><span>Naziv</span>
-        <input name="name" type="text" maxlength="${FORUM_LIMITS.name}" placeholder="npr. Anime" required>
+        <input name="name" type="text" maxlength="${FORUM_LIMITS.name}" placeholder="npr. Anime" value="${edit ? esc(edit.name) : ""}" required>
       </label>
       <label class="field"><span>Opis (nije obavezan)</span>
-        <input name="desc" type="text" maxlength="${FORUM_LIMITS.desc}" placeholder="O čemu se ovde priča?">
+        <input name="desc" type="text" maxlength="${FORUM_LIMITS.desc}" placeholder="O čemu se ovde priča?" value="${edit ? esc(edit.desc) : ""}">
       </label>
       <div class="field"><span>Ikonica</span>
-        <input id="forum-emoji" name="emoji" type="text" maxlength="8" value="💬" class="emoji-input" aria-label="Emoji">
+        <input id="forum-emoji" name="emoji" type="text" maxlength="8" value="${edit ? esc(edit.emoji) : "💬"}" class="emoji-input" aria-label="Emoji">
         <div class="emoji-row">${em}</div>
       </div>
       <div class="field"><span>Boja</span><div class="swatches">${sw}</div></div>
-      ${state.user && state.user.isAdmin ? `<label class="check"><input name="adminOnly" type="checkbox"> Objavljuju samo moderatori (kao Novosti)</label>` : ""}
+      ${state.user && state.user.isAdmin && (!edit || edit.custom) ? `<label class="check"><input name="adminOnly" type="checkbox" ${edit && edit.adminOnly ? "checked" : ""}> Objavljuju samo moderatori (kao Novosti)</label>` : ""}
       <div class="form-error" role="alert"></div>
       <div class="row">
         <button class="btn" type="button" data-action="close-dialog">Otkaži</button>
-        <button class="btn btn-primary" type="submit">Napravi forum</button>
+        <button class="btn btn-primary" type="submit">${edit ? "Sačuvaj" : "Napravi forum"}</button>
       </div>
     </form>`);
 }
@@ -1103,6 +1155,17 @@ async function uploadPhoto(file) {
   }
 }
 
+// Ko dobija notifikaciju kad komentarišem: autor komentara na koji odgovaram, pa autor objave.
+function notifyTargets(parentId) {
+  const out = [];
+  const me = state.user && state.user.uid;
+  const parent = parentId ? state.comments.find((c) => c.id === parentId) : null;
+  if (parent && parent.authorId && parent.authorId !== me && !parent.deleted) out.push({ uid: parent.authorId, type: "reply" });
+  const owner = state.post && state.post.authorId;
+  if (owner && owner !== me && !out.some((t) => t.uid === owner)) out.push({ uid: owner, type: "comment" });
+  return out;
+}
+
 function needLogin(note) {
   if (state.user) return false;
   authDialog("login", note);
@@ -1155,6 +1218,15 @@ async function runAction(el) {
       if (needLogin("Prijavi se da napraviš forum.")) return;
       return forumDialog();
     case "pick-emoji": { const i = document.getElementById("forum-emoji"); if (i) i.value = v; return; }
+    case "notifs": return notifsDialog();
+    case "notifs-read-all":
+      backend.markNotificationsRead(state.notifs.filter((n) => !n.read).map((n) => n.id));
+      return;
+    case "edit-forum": {
+      const c = COMMUNITIES.find((x) => x.id === id);
+      if (c && canEditForum(c)) forumDialog(c);
+      return;
+    }
     case "delete-forum":
       return confirmDialog({ title: "Obrisati forum?", text: "Forum nestaje iz liste. Objave iz njega ostaju i vide se u „Sve objave“. Ovo ne može da se vrati.", action: "do-delete-forum", data: { id } });
     case "do-delete-forum":
@@ -1257,6 +1329,19 @@ async function submitForm(form) {
         toast("Nalog je napravljen");
         break;
       case "forum": {
+        if (fd.get("id")) {
+          const fid = String(fd.get("id"));
+          await backend.updateForum(fid, {
+            name: String(fd.get("name")),
+            desc: String(fd.get("desc")),
+            emoji: String(fd.get("emoji")),
+            color: String(fd.get("color")),
+            adminOnly: fd.get("adminOnly") === "on",
+          });
+          closeDialog();
+          toast("Forum je sačuvan");
+          break;
+        }
         const id = await backend.createForum({
           name: String(fd.get("name")),
           desc: String(fd.get("desc")),
@@ -1284,13 +1369,19 @@ async function submitForm(form) {
         break;
       }
       case "comment":
-        await backend.createComment({ postId: state.route.id, parentId: null, body: String(fd.get("body")) });
+        await backend.createComment({
+          postId: state.route.id, parentId: null, body: String(fd.get("body")),
+          postTitle: state.post ? state.post.title : "", notify: notifyTargets(null),
+        });
         state.draftComment = "";
         toast("Komentarisano");
         render();
         break;
       case "reply":
-        await backend.createComment({ postId: state.route.id, parentId: form.dataset.parent, body: String(fd.get("body")) });
+        await backend.createComment({
+          postId: state.route.id, parentId: form.dataset.parent, body: String(fd.get("body")),
+          postTitle: state.post ? state.post.title : "", notify: notifyTargets(form.dataset.parent),
+        });
         state.reply = null;
         toast("Odgovoreno");
         render();
@@ -1322,7 +1413,12 @@ async function submitForm(form) {
 function bindEvents() {
   document.addEventListener("click", (e) => {
     // Linkovi u dijalogu (npr. lista foruma) zatvaraju dijalog i normalno prate adresu.
-    if (e.target.closest("#dlg a")) { closeDialog(); return; }
+    if (e.target.closest("#dlg a")) {
+      const n = e.target.closest("[data-notif]");
+      if (n && backend) backend.markNotificationsRead([n.dataset.notif]);
+      closeDialog();
+      return;
+    }
     const el = e.target.closest("[data-action]");
     if (!el) return;
     e.preventDefault();

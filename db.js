@@ -16,7 +16,10 @@
 //  report({targetType,targetId,postId,reason,snippet}), dismissReport(id)
 //  subscribeForums(cb, errCb)         forumi koje su napravili moderatori
 //  createForum({name,desc,emoji,color,adminOnly}) -> id    (svaki prijavljen korisnik; adminOnly samo admin)
-//  deleteForum(id)                    (autor foruma ili admin)
+//  updateForum(id, {name,desc,emoji,color,adminOnly})   (autor foruma ili admin; ugrađene forume samo admin)
+//  deleteForum(id)                    (autor foruma ili admin; ugrađeni se ne brišu)
+//  subscribeNotifications(uid, cb), markNotificationsRead(ids)
+//  createComment({postId,parentId,body,postTitle,notify:[{uid,type}]})   type: "comment" | "reply"
 //  loadPhotos(imena) -> {ime: dataUrl|""}, setPhoto(dataUrl), removePhoto(ime)   (profilne slike)
 
 import { COMMUNITIES, FORUM_LIMITS, isBuiltin, slugify } from "./communities.js";
@@ -106,19 +109,43 @@ function validatePhoto(dataUrl) {
   return dataUrl;
 }
 
-function validateForum({ name, desc, emoji, color, adminOnly }, isAdmin) {
+// Zajednička provera polja foruma (naziv, opis, ikonica, boja).
+function forumFields({ name, desc, emoji, color }) {
   const n = (name || "").trim().replace(/\s+/g, " ");
   if (n.length < 2) throw fail("Naziv mora imati bar 2 znaka.");
   if (n.length > FORUM_LIMITS.name) throw fail(`Naziv može imati najviše ${FORUM_LIMITS.name} znakova.`);
-  const id = slugify(n);
-  if (id.length < 2) throw fail("Naziv mora sadržati bar dva slova ili broja.");
-  if (isBuiltin(id) || COMMUNITIES.some((c) => c.id === id)) throw fail("Forum sa tim imenom već postoji.");
   const d = (desc || "").trim();
   if (d.length > FORUM_LIMITS.desc) throw fail(`Opis može imati najviše ${FORUM_LIMITS.desc} znakova.`);
   const e = (emoji || "").trim() || "💬";
   if (e.length > 8) throw fail("Za ikonu upiši samo jedan emoji.");
   const col = /^#[0-9A-Fa-f]{6}$/.test(color || "") ? color : "#6D4AFF";
-  return { id, name: n, desc: d, emoji: e, color: col, adminOnly: isAdmin && Boolean(adminOnly) };
+  return { name: n, desc: d, emoji: e, color: col };
+}
+
+function validateForum(input, isAdmin) {
+  const f = forumFields(input);
+  const id = slugify(f.name);
+  if (id.length < 2) throw fail("Naziv mora sadržati bar dva slova ili broja.");
+  if (isBuiltin(id) || COMMUNITIES.some((c) => c.id === id)) throw fail("Forum sa tim imenom već postoji.");
+  return { id, ...f, adminOnly: isAdmin && Boolean(input.adminOnly) };
+}
+
+// Pri izmeni naziva proveri da ga ne nosi neki drugi forum.
+function checkRename(id, name) {
+  const key = name.toLowerCase();
+  if (COMMUNITIES.some((c) => c.id !== id && (c.name.toLowerCase() === key || slugify(c.name) === slugify(name))))
+    throw fail("Forum sa tim imenom već postoji.");
+}
+
+const NOTIF_TYPES = ["comment", "reply"];
+
+function cleanNotify(list, meUid) {
+  const seen = new Set();
+  return (Array.isArray(list) ? list : []).filter((t) => {
+    if (!t || typeof t.uid !== "string" || !NOTIF_TYPES.includes(t.type) || t.uid === meUid || seen.has(t.uid)) return false;
+    seen.add(t.uid);
+    return true;
+  });
 }
 
 function validateComment(body) {
@@ -321,8 +348,49 @@ async function createFirebaseBackend(config) {
       }
     },
 
+    async updateForum(id, input) {
+      const me = need();
+      const f = forumFields(input);
+      checkRename(id, f.name);
+      try {
+        const ref = doc(db, "forums", id);
+        if (isBuiltin(id)) {
+          if (!me.isAdmin) throw fail("Ugrađene forume menjaju samo moderatori.");
+          const cur = await getDoc(ref);
+          if (cur.exists()) await updateDoc(ref, f);
+          else await setDoc(ref, { ...f, adminOnly: false, createdBy: me.uid, createdAt: serverTimestamp() });
+        } else {
+          const patch = { ...f };
+          if (me.isAdmin && typeof input.adminOnly === "boolean") patch.adminOnly = input.adminOnly;
+          await updateDoc(ref, patch);
+        }
+      } catch (e) {
+        if (e && e.code === "permission-denied")
+          throw fail("Izmena nije sačuvana. Proveri da li su najnovija pravila objavljena u Firebase konzoli.");
+        throw friendlyError(e);
+      }
+    },
+
+    subscribeNotifications(uid, cb) {
+      const q = query(collection(db, "users", uid, "notifications"), orderBy("createdAt", "desc"), limit(30));
+      return watch(q, (s) => s.docs.map(mapDoc), cb, () => {});
+    },
+
+    async markNotificationsRead(ids) {
+      const me = need();
+      if (!ids.length) return;
+      try {
+        const batch = writeBatch(db);
+        ids.slice(0, 30).forEach((id) => batch.update(doc(db, "users", me.uid, "notifications", id), { read: true }));
+        await batch.commit();
+      } catch (e) {
+        console.error(e);
+      }
+    },
+
     async deleteForum(id) {
       need();
+      if (isBuiltin(id)) throw fail("Ugrađeni forumi ne mogu da se obrišu.");
       try {
         await deleteDoc(doc(db, "forums", id));
       } catch (e) {
@@ -426,12 +494,23 @@ async function createFirebaseBackend(config) {
       }
     },
 
-    async createComment({ postId, parentId, body }) {
+    async createComment({ postId, parentId, body, postTitle, notify }) {
       const me = need();
       const text = validateComment(body);
       try {
         const batch = writeBatch(db);
         const ref = doc(collection(db, "comments"));
+        cleanNotify(notify, me.uid).forEach((t) => {
+          batch.set(doc(collection(db, "users", t.uid, "notifications")), {
+            type: t.type,
+            fromName: me.username,
+            postId,
+            postTitle: String(postTitle || "").slice(0, 120),
+            commentId: ref.id,
+            createdAt: serverTimestamp(),
+            read: false,
+          });
+        });
         batch.set(ref, {
           postId,
           parentId: parentId || null,
@@ -620,8 +699,37 @@ function createDemoBackend() {
       return f.id;
     },
 
+    async updateForum(id, input) {
+      const m = need();
+      const f = forumFields(input);
+      checkRename(id, f.name);
+      data.forums = data.forums || [];
+      let x = data.forums.find((z) => z.id === id);
+      if (isBuiltin(id)) {
+        if (!m.isAdmin) throw fail("Ugrađene forume menjaju samo moderatori.");
+        if (!x) { x = { id, adminOnly: false, createdBy: m.uid, createdAt: Date.now() }; data.forums.push(x); }
+      } else {
+        if (!x) throw fail("Forum ne postoji.");
+        if (x.createdBy !== m.uid && !m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
+        if (m.isAdmin && typeof input.adminOnly === "boolean") x.adminOnly = input.adminOnly;
+      }
+      Object.assign(x, f);
+      save();
+    },
+
+    subscribeNotifications(uid, cb) {
+      return sub(() => [...((data.notifications || {})[uid] || [])].sort((a, b) => b.createdAt - a.createdAt).slice(0, 30), cb);
+    },
+
+    async markNotificationsRead(ids) {
+      const m = need();
+      ((data.notifications || {})[m.uid] || []).forEach((n) => { if (ids.includes(n.id)) n.read = true; });
+      save();
+    },
+
     async deleteForum(id) {
       const m = need();
+      if (isBuiltin(id)) throw fail("Ugrađeni forumi ne mogu da se obrišu.");
       const f = (data.forums || []).find((x) => x.id === id);
       if (f && f.createdBy !== m.uid && !m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
       data.forums = (data.forums || []).filter((x) => x.id !== id);
@@ -685,7 +793,7 @@ function createDemoBackend() {
       save();
     },
 
-    async createComment({ postId, parentId, body }) {
+    async createComment({ postId, parentId, body, postTitle, notify }) {
       const m = need();
       const text = validateComment(body);
       const post = data.posts.find((p) => p.id === postId);
@@ -694,6 +802,13 @@ function createDemoBackend() {
         id: newId(), postId, parentId: parentId || null, body: text,
         authorId: m.uid, authorName: m.username, createdAt: Date.now(), score: 0, deleted: false,
       };
+      data.notifications = data.notifications || {};
+      cleanNotify(notify, m.uid).forEach((t) => {
+        (data.notifications[t.uid] = data.notifications[t.uid] || []).push({
+          id: newId(), type: t.type, fromName: m.username, postId,
+          postTitle: String(postTitle || "").slice(0, 120), commentId: c.id, createdAt: Date.now(), read: false,
+        });
+      });
       data.comments.push(c);
       post.commentCount += 1;
       save();
