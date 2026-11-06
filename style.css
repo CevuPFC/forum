@@ -539,3 +539,14 @@ label.btn { cursor: pointer; }
   .avatar.xxl { width: 80px; height: 80px; margin-top: -40px; font-size: 2rem; }
   .profile-card .profile-head h1 { font-size: 1.5rem; }
 }
+
+/* ---------- Bedž moderatora ---------- */
+
+.staff-mark { display: inline-grid; place-items: center; vertical-align: -2px; margin-left: 4px; color: var(--cyan, #35e0ff); }
+.mod-pill {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 3px 12px 3px 8px;
+  border-radius: 999px; font-size: 0.82rem; font-weight: 700;
+  color: #35e0ff; background: rgba(53, 224, 255, 0.12); border: 1px solid rgba(53, 224, 255, 0.45);
+}
+[data-theme="light"] .staff-mark { color: #0a8bb0; }
+[data-theme="light"] .mod-pill { color: #0a7f9f; background: rgba(10, 139, 176, 0.1); border-color: rgba(10, 139, 176, 0.4); }

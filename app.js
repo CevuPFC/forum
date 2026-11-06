@@ -32,6 +32,7 @@ const state = {
   busy: new Set(),
   uploading: false,
   notifs: [],
+  staff: new Set(),
 };
 
 let unsubPosts = null;
@@ -39,6 +40,7 @@ let unsubForums = null;
 let unsubVotes = null;
 let unsubReports = null;
 let unsubNotifs = null;
+let unsubStaff = null;
 let notifSeen = null; // ID-evi notifikacija koje su već stigle (da se za nove pokaže poruka)
 let routeSubs = [];
 
@@ -255,6 +257,13 @@ function onRoute() {
 
 function syncPostsSub() {
   if (!backend) return;
+  if (readingAllowed() && !unsubStaff) {
+    unsubStaff = backend.subscribeStaff((names) => { state.staff = new Set(names.map((n) => n.toLowerCase())); renderData(); });
+  } else if (!readingAllowed() && unsubStaff) {
+    unsubStaff();
+    unsubStaff = null;
+    state.staff = new Set();
+  }
   if (readingAllowed() && !unsubForums) {
     unsubForums = backend.subscribeForums(
       (list) => { setCustomForums(list); state.forumsLoaded = true; renderData(); },
@@ -405,6 +414,11 @@ function updateTitle() {
 
 const newPostHref = () => `#/novo${state.route.name === "feed" && state.route.community ? "/" + enc(state.route.community) : ""}`;
 
+const isStaff = (name) => state.staff.has(String(name || "").toLowerCase());
+const shieldIcon = svg('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>', 14);
+const staffMark = (name) =>
+  isStaff(name) ? `<span class="staff-mark" title="Moderator" aria-label="Moderator">${shieldIcon}</span>` : "";
+
 const unreadCount = () => state.notifs.filter((n) => !n.read).length;
 
 const notifPlain = (n) =>
@@ -539,7 +553,7 @@ function postHead(p) {
   return `<header class="post-head">
     ${avatar(p.authorName)}
     <div class="who">
-      <a class="name" href="#/u/${enc(p.authorName)}">${esc(p.authorName)}</a>
+      <a class="name" href="#/u/${enc(p.authorName)}">${esc(p.authorName)}</a>${staffMark(p.authorName)}
       <div class="sub">
         <a class="chip" href="#/f/${esc(c.id)}">${emo(c, "sm")}${esc(c.name)}</a>
         <time datetime="${new Date(p.createdAt).toISOString()}">${ago(p.createdAt)}</time>
@@ -651,6 +665,7 @@ function userView() {
     ${avatar(name, "xxl")}
     <div>
       <h1>${esc(name)}</h1>
+      ${isStaff(name) ? `<span class="mod-pill" title="Moderator Glasa">${shieldIcon}Moderator</span>` : ""}
       <p class="feed-desc">${pluralPosts(list.length)} među poslednjih 300 na Glasu.</p>
     </div>
     <div class="profile-actions">
@@ -728,7 +743,7 @@ function buildCommentTree() {
     const folded = state.collapsed.has(c.id);
     const my = state.myVotes[c.id] || 0;
     const cls = ["comment", kids.length && !folded ? "" : "leaf", depth >= 5 ? "flat" : ""].filter(Boolean).join(" ");
-    const author = c.deleted ? "[obrisano]" : `<a class="author" href="#/u/${enc(c.authorName)}">${esc(c.authorName)}</a>`;
+    const author = c.deleted ? "[obrisano]" : `<a class="author" href="#/u/${enc(c.authorName)}">${esc(c.authorName)}</a>${staffMark(c.authorName)}`;
     const av = c.deleted ? `<span class="avatar sm" style="background:var(--surface-2)" aria-hidden="true"></span>` : avatar(c.authorName, "sm");
 
     let content = "";

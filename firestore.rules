@@ -72,9 +72,14 @@ service cloud.firestore {
     }
 
     // Administratori: dokument se pravi ručno u konzoli (ID dokumenta = UID korisnika)
+    // Spisak moderatora je javan (da se pored njihovog imena vidi bedž). Dokument pravi samo vlasnik projekta
+    // u konzoli; moderator sme samo da upiše svoje korisničko ime u polje "username".
     match /admins/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
+      allow read: if true;
+      allow create, delete: if false;
+      allow update: if signedIn() && request.auth.uid == uid
+        && onlyChanges(['username'])
+        && request.resource.data.username == myName();
     }
 
     // Forumi koje prave korisnici. ID dokumenta je adresa foruma (npr. "anime").

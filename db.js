@@ -14,6 +14,7 @@
 //  deletePost(id), createComment({postId,parentId,body}), deleteComment(id)
 //  vote(kind, id, value)              kind: "posts" | "comments", value: -1 | 0 | 1
 //  report({targetType,targetId,postId,reason,snippet}), dismissReport(id)
+//  subscribeStaff(cb)                 cb(["admin", ...]) korisnička imena moderatora (za bedž)
 //  subscribeForums(cb, errCb)         forumi koje su napravili moderatori
 //  createForum({name,desc,emoji,color,adminOnly}) -> id    (svaki prijavljen korisnik; adminOnly samo admin)
 //  updateForum(id, {name,desc,emoji,color,adminOnly})   (autor foruma ili admin; ugrađene forume samo admin)
@@ -216,7 +217,12 @@ async function createFirebaseBackend(config) {
       getDoc(doc(db, "admins", user.uid)).catch(() => null),
     ]);
     const isAdmin = Boolean(a && a.exists());
-    if (u.exists()) return { uid: user.uid, username: u.data().username, isAdmin };
+    if (u.exists()) {
+      const username = u.data().username;
+      // Moderator upisuje svoje ime u svoj dokument u "admins", da bi svi videli bedž pored njegovog imena.
+      if (isAdmin && a.data().username !== username) updateDoc(doc(db, "admins", user.uid), { username }).catch(() => {});
+      return { uid: user.uid, username, isAdmin };
+    }
     // Nalog postoji, a profil nije napravljen (npr. prekinuta registracija). Napravi ga automatski.
     const base = (user.email || "ucenik").split("@")[0].replace(/[^A-Za-z0-9_.]/g, "").slice(0, 14) || "ucenik";
     for (let i = 0; i < 4; i++) {
@@ -330,6 +336,14 @@ async function createFirebaseBackend(config) {
     subscribeReports(cb, errCb) {
       const q = query(collection(db, "reports"), orderBy("createdAt", "desc"), limit(100));
       return watch(q, (s) => s.docs.map(mapDoc), cb, errCb);
+    },
+
+    subscribeStaff(cb) {
+      return onSnapshot(
+        collection(db, "admins"),
+        (snap) => cb(snap.docs.map((d) => d.data().username).filter((n) => typeof n === "string")),
+        () => {}
+      );
     },
 
     subscribeForums(cb, errCb) {
@@ -750,6 +764,9 @@ function createDemoBackend() {
     },
     subscribeReports(cb) {
       return sub(() => [...data.reports].sort((a, b) => b.createdAt - a.createdAt), cb);
+    },
+    subscribeStaff(cb) {
+      return sub(() => Object.values(data.users).filter((u) => u.username.toLowerCase() === "admin").map((u) => u.username), cb);
     },
     subscribeForums(cb) {
       return sub(() => data.forums || [], cb);
