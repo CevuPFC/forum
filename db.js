@@ -21,6 +21,7 @@
 //  subscribeNotifications(uid, cb), markNotificationsRead(ids), deleteNotifications(ids), clearNotifications()
 //  createComment({postId,parentId,body,postTitle,notify:[{uid,type}]})   type: "comment" | "reply"
 //  loadPhotos(imena) -> {ime: dataUrl|""}, setPhoto(dataUrl), removePhoto(ime)   (profilne slike)
+//  loadBanner(ime) -> dataUrl|"", setBanner(dataUrl), removeBanner(ime)            (baner na profilu)
 
 import { COMMUNITIES, FORUM_LIMITS, isBuiltin, slugify } from "./communities.js";
 import { buildSeed } from "./seed.js";
@@ -92,13 +93,21 @@ function validatePost({ title, body, url, community }, isAdmin) {
 }
 
 export const IMAGE_MAX = 300000; // najviše znakova u data URL-u slike uz objavu
-export const PHOTO_MAX = 20000; // najviše znakova u data URL-u (oko 15 KB slike)
+export const PHOTO_MAX = 20000;
+export const BANNER_MAX = 150000; // najviše znakova u data URL-u banera // najviše znakova u data URL-u (oko 15 KB slike)
 
 function validateImageData(dataUrl) {
   if (!dataUrl) return "";
   if (typeof dataUrl !== "string" || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(dataUrl))
     throw fail("Slika nije ispravna. Izaberi JPG, PNG ili WebP.");
   if (dataUrl.length > IMAGE_MAX) throw fail("Slika je prevelika. Probaj drugu.");
+  return dataUrl;
+}
+
+function validateBanner(dataUrl) {
+  if (typeof dataUrl !== "string" || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(dataUrl))
+    throw fail("Slika nije ispravna. Izaberi JPG, PNG ili WebP.");
+  if (dataUrl.length > BANNER_MAX) throw fail("Slika je prevelika. Probaj drugu.");
   return dataUrl;
 }
 
@@ -460,6 +469,36 @@ async function createFirebaseBackend(config) {
       }
     },
 
+    async loadBanner(name) {
+      try {
+        const d = await getDoc(doc(db, "banners", String(name).toLowerCase()));
+        return d.exists() && typeof d.data().data === "string" ? d.data().data : "";
+      } catch (_) {
+        return "";
+      }
+    },
+
+    async setBanner(dataUrl) {
+      const me = need();
+      const data = validateBanner(dataUrl);
+      try {
+        await setDoc(doc(db, "banners", me.username.toLowerCase()), { data, updatedAt: serverTimestamp() });
+      } catch (e) {
+        if (e && e.code === "permission-denied")
+          throw fail("Baner nije sačuvan. Proveri da li su najnovija pravila objavljena u Firebase konzoli.");
+        throw friendlyError(e);
+      }
+    },
+
+    async removeBanner(name) {
+      need();
+      try {
+        await deleteDoc(doc(db, "banners", String(name).toLowerCase()));
+      } catch (e) {
+        throw friendlyError(e);
+      }
+    },
+
     async createPost(input) {
       const me = need();
       const p = validatePost(input, me.isAdmin);
@@ -801,6 +840,26 @@ function createDemoBackend() {
       const key = String(name).toLowerCase();
       if (key !== m.username.toLowerCase() && !m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
       if (data.profiles) delete data.profiles[key];
+      save();
+    },
+
+    async loadBanner(name) {
+      return (data.banners && data.banners[String(name).toLowerCase()]) || "";
+    },
+
+    async setBanner(dataUrl) {
+      const m = need();
+      const b = validateBanner(dataUrl);
+      data.banners = data.banners || {};
+      data.banners[m.username.toLowerCase()] = b;
+      save();
+    },
+
+    async removeBanner(name) {
+      const m = need();
+      const key = String(name).toLowerCase();
+      if (key !== m.username.toLowerCase() && !m.isAdmin) throw fail("Nemaš dozvolu za ovu radnju.");
+      if (data.banners) delete data.banners[key];
       save();
     },
 

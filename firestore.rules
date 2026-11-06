@@ -12,6 +12,7 @@ rules_version = '2';
 //  - svaki prijavljen korisnik može da napravi novi forum (kolekcija "forums"); menjaju i brišu ga autor i administratori
 //  - notifikacije (users/{uid}/notifications): pravi ih onaj ko komentariše, čita ih samo vlasnik
 //  - slike uz objave (kolekcija "images") i profilne slike (kolekcija "profiles") su mali JPEG-ovi u bazi
+//  - baner na profilu (kolekcija "banners") menja samo vlasnik naloga
 //  - profilnu sliku (kolekcija "profiles") menja samo vlasnik naloga; brisati je može i administrator
 
 service cloud.firestore {
@@ -120,6 +121,20 @@ service cloud.firestore {
         && request.resource.data.photo is string
         && request.resource.data.photo.size() <= 20000
         && request.resource.data.photo.matches('^data:image/jpeg;base64,[A-Za-z0-9+/=]+$')
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if signedIn()
+        && (get(/databases/$(database)/documents/usernames/$(name)).data.uid == request.auth.uid || isAdmin());
+    }
+
+    // Baner na profilu: ID dokumenta je korisničko ime malim slovima. Slika je JPEG (data URL).
+    match /banners/{name} {
+      allow read: if true;
+      allow create, update: if signedIn()
+        && get(/databases/$(database)/documents/usernames/$(name)).data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['data', 'updatedAt'])
+        && request.resource.data.data is string
+        && request.resource.data.data.size() <= 150000
+        && request.resource.data.data.matches('^data:image/jpeg;base64,[A-Za-z0-9+/=]+$')
         && request.resource.data.updatedAt == request.time;
       allow delete: if signedIn()
         && (get(/databases/$(database)/documents/usernames/$(name)).data.uid == request.auth.uid || isAdmin());

@@ -1,6 +1,6 @@
 import { firebaseConfig, settings } from "./firebase-config.js";
 import { COMMUNITIES, ALL_FORUMS, FORUM_LIMITS, FORUM_COLORS, FORUM_EMOJIS, getCommunity, setCustomForums } from "./communities.js";
-import { createBackend, LIMITS, PHOTO_MAX } from "./db.js";
+import { createBackend, LIMITS, PHOTO_MAX, BANNER_MAX } from "./db.js";
 import { uploads } from "./uploads-config.js";
 
 /* ------------------------------------------------------------------ */
@@ -157,6 +157,11 @@ function hue(name) {
 // Profilne slike: ime (malim slovima) -> data URL, ili "" ako nema slike. Učitavaju se po potrebi.
 const photos = {};
 const photoPending = new Set();
+// Baner profila se učitava samo kad se otvori profil tog korisnika.
+const banners = {};
+const bannerPending = new Set();
+const bannerOf = (name) => banners[String(name || "").toLowerCase()] || "";
+
 const photoOf = (name) => photos[String(name || "").toLowerCase()] || "";
 
 const avatar = (name, size = "") => {
@@ -367,6 +372,16 @@ function ensurePhotos() {
   if (state.post) add(state.post.authorName);
   if (state.user) add(state.user.username);
   if (state.route.name === "user") add(state.route.username);
+  if (state.route.name === "user") {
+    const key = String(state.route.username).toLowerCase();
+    if (!(key in banners) && !bannerPending.has(key)) {
+      bannerPending.add(key);
+      backend.loadBanner(key).then(
+        (b) => { banners[key] = b || ""; bannerPending.delete(key); renderData(); },
+        () => { banners[key] = ""; bannerPending.delete(key); }
+      );
+    }
+  }
   const todo = [...names].filter((n) => !(n in photos) && !photoPending.has(n)).slice(0, 80);
   if (!todo.length) return;
   todo.forEach((n) => photoPending.add(n));
@@ -622,8 +637,18 @@ function userView() {
   const name = state.route.username;
   const list = sortPosts(state.posts.filter((p) => p.authorName.toLowerCase() === name.toLowerCase()));
   const mine = state.user && state.user.username.toLowerCase() === name.toLowerCase();
-  const head = `<section class="profile-head">
-    ${avatar(name, "xl")}
+  const canBanner = mine || (state.user && state.user.isAdmin);
+  const bn = bannerOf(name);
+  const head = `<div class="profile-card"><div class="profile-banner" style="--h:${hue(name)}">
+      ${bn ? `<img src="${esc(bn)}" alt="">` : ""}
+      ${canBanner ? `<div class="banner-tools">
+        ${mine ? `<label class="btn btn-small" for="banner-input" tabindex="0">${bn ? "Promeni baner" : "Dodaj baner"}</label>
+          <input id="banner-input" type="file" accept="image/*" hidden>` : ""}
+        ${bn ? `<button class="btn btn-small" type="button" data-action="remove-banner" data-id="${esc(name)}">Ukloni baner</button>` : ""}
+      </div>` : ""}
+    </div>
+    <section class="profile-head">
+    ${avatar(name, "xxl")}
     <div>
       <h1>${esc(name)}</h1>
       <p class="feed-desc">${pluralPosts(list.length)} među poslednjih 300 na Glasu.</p>
@@ -635,7 +660,7 @@ function userView() {
         ? `<button class="btn" type="button" data-action="remove-photo" data-id="${esc(name)}">Ukloni sliku</button>` : ""}
       ${mine ? `<button class="btn" type="button" data-action="logout">Odjavi se</button>` : ""}
     </div>
-  </section>${mine ? `<div class="form-error" id="photo-error" role="alert"></div>` : ""}`;
+  </section></div>${mine ? `<div class="form-error" id="photo-error" role="alert"></div>` : ""}`;
   const body = !state.postsLoaded
     ? loadingView()
     : list.length
@@ -1160,6 +1185,53 @@ function resizeToJpeg(file) {
   });
 }
 
+// Baner: centriran isečak odnosa 3:1, 900x300, JPEG koji staje u dokument baze.
+function bannerFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      try {
+        for (const [w, q] of [[900, 0.82], [900, 0.68], [720, 0.62], [600, 0.55], [480, 0.5]]) {
+          const h = Math.round(w / 3);
+          const c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          const ctx = c.getContext("2d");
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, w, h);
+          const k = Math.max(w / img.width, h / img.height); // popuni ceo baner
+          const sw = w / k, sh = h / k;
+          ctx.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, w, h);
+          const out = c.toDataURL("image/jpeg", q);
+          if (out.length <= BANNER_MAX) return resolve(out);
+        }
+        reject(new Error("Slika je prevelika. Probaj drugu."));
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Ovu sliku ne mogu da otvorim. Probaj JPG ili PNG.")); };
+    img.src = url;
+  });
+}
+
+async function uploadBanner(file) {
+  const box = document.getElementById("photo-error");
+  if (box) box.textContent = "";
+  try {
+    if (!state.user) return;
+    if (!/^image\//.test(file.type)) throw new Error("Izaberi sliku (JPG, PNG ili WebP).");
+    const dataUrl = await bannerFromFile(file);
+    await backend.setBanner(dataUrl);
+    banners[state.user.username.toLowerCase()] = dataUrl;
+    toast("Baner je promenjen");
+    render();
+  } catch (e) {
+    if (box) box.textContent = e.message || "Baner nije sačuvan.";
+    else toast(e.message || "Baner nije sačuvan.");
+  }
+}
+
 async function uploadPhoto(file) {
   const box = document.getElementById("photo-error");
   if (box) box.textContent = "";
@@ -1312,6 +1384,14 @@ async function runAction(el) {
         else await backend.deleteComment(id);
         await backend.dismissReport(el.dataset.report);
         toast("Obrisano");
+      } catch (e) { toast(e.message); }
+      return;
+    case "remove-banner":
+      try {
+        await backend.removeBanner(id);
+        banners[String(id).toLowerCase()] = "";
+        toast("Baner uklonjen");
+        render();
       } catch (e) { toast(e.message); }
       return;
     case "remove-photo":
@@ -1484,6 +1564,11 @@ function bindEvents() {
   document.addEventListener("change", (e) => {
     if (e.target.id === "np-file" && e.target.files && e.target.files[0]) {
       pickMedia(e.target.files[0]);
+      e.target.value = "";
+      return;
+    }
+    if (e.target.id === "banner-input" && e.target.files && e.target.files[0]) {
+      uploadBanner(e.target.files[0]);
       e.target.value = "";
       return;
     }
